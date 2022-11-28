@@ -8,8 +8,10 @@ use webrtc::api::media_engine::MIME_TYPE_VP8;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 
+use crate::track_feeder::{self, TrackFeeder};
+
 use super::ffmpeg::FFmpeg;
-use super::webrtc_sink::WebrtcSink;
+use super::stream_peer::StreamPeer;
 
 pub struct RtpStreamController {}
 
@@ -18,39 +20,46 @@ impl RtpStreamController {}
 pub struct RtpStream {
     ffmpeg: Option<FFmpeg>,
     delay: bool,
-    track: Arc<TrackLocalStaticRTP>,
+    ff_packets: Arc<Mutex<Vec<Vec<u8>>>>,
+    feeders: Arc<Mutex<Vec<TrackFeeder>>>,
 }
 
 impl RtpStream {
     pub fn new(port: u16) -> RtpStream {
-        let sock = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], port)));
+        // Distribute to feeders
+        let packets: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+        let feeders: Arc<Mutex<Vec<TrackFeeder>>> = Arc::new(Mutex::new(Vec::new()));
 
-        let track = Arc::new(TrackLocalStaticRTP::new(
-            RTCRtpCodecCapability {
-                mime_type: MIME_TYPE_VP8.to_owned(),
-                ..Default::default()
-            },
-            format!("video_{}", "kek"),
-            "test".to_string(), // Make the stream id the passed in string
-        ));
-
-        let track_handle = track.clone();
-
+        let p_i = packets.clone();
+        let f_i = feeders.clone();
         tokio::spawn(async move {
+            // Open socket
+            let sock = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], port)));
             let sock = sock.await.expect("Couldn't open UDP socket!");
             let mut inbound_rtp_packet = vec![0u8; 1600]; // UDP MTU
+
+            // Read packet continuously
             while let Ok((n, _)) = sock.recv_from(&mut inbound_rtp_packet).await {
-                track_handle
-                    .write(&inbound_rtp_packet[..n])
-                    .await
-                    .expect("Failed to write to track!");
+                // Store packet
+                p_i.lock().unwrap().push(inbound_rtp_packet.clone());
+
+                // Clear discarded feeders
+                f_i.lock().unwrap().retain(|f| f.is_active());
+
+                // Push packet to non-discarded feeders.
+                for feeder in f_i.lock().unwrap().iter() {
+                    feeder.push(inbound_rtp_packet.clone());
+                }
+
+                todo!("Delete old RTP packets from fast forward buffer");
             }
         });
 
         RtpStream {
             ffmpeg: None,
             delay: false,
-            track,
+            ff_packets: packets,
+            feeders,
         }
     }
 
@@ -58,7 +67,14 @@ impl RtpStream {
         todo!("Implement internal ffmpeg constructor");
     }
 
-    pub fn bind(&mut self, sink: Arc<Mutex<WebrtcSink>>) {
+    pub fn setup_feeder(&self, track: Arc<TrackLocalStaticRTP>) -> Arc<Mutex<TrackFeeder>> {
+        let f = Arc::new(TrackFeeder::new(
+            self.ff_packets.lock().unwrap().clone(),
+            track,
+        ));
+        // Create new feeder
 
+        // Add to feeder array for future pushes
+        f
     }
 }
