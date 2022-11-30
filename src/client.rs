@@ -7,23 +7,23 @@ use std::sync::{Arc, Mutex};
 use webrtc::{
     api::media_engine::MIME_TYPE_VP8,
     peer_connection::sdp::session_description::RTCSessionDescription,
-    rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
-    track::track_local::track_local_static_rtp::TrackLocalStaticRTP, sctp::stream,
+    rtp_transceiver::rtp_codec::RTCRtpCodecCapability, sctp::stream,
+    track::track_local::track_local_static_rtp::TrackLocalStaticRTP,
 };
 
-use crate::{track_feeder::TrackFeeder, rtp_stream::RtpStream};
+use crate::{rtp_stream::RtpStream, track_feeder::TrackFeeder};
 
 struct track_info {
     track: Arc<TrackLocalStaticRTP>,
-    feeder: Option<Arc<Mutex<TrackFeeder>>>,
+    feeder: Option<Arc<TrackFeeder>>,
 }
 
-struct Client {
+pub struct Client {
     tracks: Vec<track_info>,
 }
 
 impl Client {
-    async fn new(offer: RTCSessionDescription) {
+    pub async fn new(offer: RTCSessionDescription) -> Client {
         // let track = Arc::new(TrackLocalStaticRTP::new(
         //     RTCRtpCodecCapability {
         //         mime_type: MIME_TYPE_VP8.to_owned(),
@@ -37,19 +37,43 @@ impl Client {
         // .write(&inbound_rtp_packet[..n])
         // .await
         // .expect("Failed to write to track!");
+
+        Client { tracks: Vec::new() }
     }
 
     async fn offer_response(&self) {}
 
+    /**
+     * Links the track with the passed index to the passed RTP stream.
+     * Switches with fast-forwarding, allowing seamless switches.
+     */
     pub fn set_track_stream(&mut self, index: usize, stream: &RtpStream) {
-        let mut track_info = self.tracks.get_mut(index).expect("Attempt to set stream on track that doesn't exist");
+        let mut track_info = self
+            .tracks
+            .get_mut(index)
+            .expect("Attempt to set stream on track that doesn't exist");
 
-        // If there's already a feeder connected to the track, get rid of it.
-        if let Some(ref mut f) = track_info.feeder {
-            f.lock().unwrap().discard();
+        // If there's already a feeder connected to the track, stop and get rid of it.
+        if let Some(ref f) = track_info.feeder {
+            f.discard();
         }
 
         track_info.feeder = Some(stream.setup_feeder(track_info.track.clone()));
+    }
+
+    /**
+     * Cleans up after a webrtc client has disconnected.
+     * Takes ownership of self so no futher calls are possible.
+     */
+    pub fn discard(self) {
+        for track_info in self.tracks {
+            // Get rid of all tracks.
+
+            // Get rid of all track feeders
+            if let Some(ref f) = track_info.feeder {
+                f.discard();
+            }
+        }
     }
 }
 

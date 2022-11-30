@@ -1,31 +1,22 @@
-use std::sync::Arc;
-
-use tokio::sync::mpsc::{channel, Sender};
-use webrtc::{
-    api::media_engine::MIME_TYPE_VP8,
-    rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
-    track::track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocalWriter},
-};
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::{atomic::AtomicBool, Arc};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use webrtc::track::track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocalWriter};
 pub struct TrackFeeder {
     sender: Sender<Vec<u8>>,
     track: Arc<TrackLocalStaticRTP>,
-    active: bool,
+    active: Arc<AtomicBool>,
 }
 
+/**
+ * Responsible for "Feeding" a track
+ */
 impl TrackFeeder {
     pub fn new(buf: Vec<Vec<u8>>, track: Arc<TrackLocalStaticRTP>) -> TrackFeeder {
-        let (send, mut rec) = channel::<Vec<u8>>(10);
+        let active_atomic = Arc::new(AtomicBool::new(true));
 
-        let t_i = track.clone();
-        tokio::spawn(async move {
-            loop {
-                // Simple: Wait on channel reciever...
-                let packet = rec.recv().await.unwrap();
-
-                // and push it to track (if not discarded)
-                t_i.write(&packet).await.unwrap();
-            }
-        });
+        // Start the async feeder task.
+        let send = TrackFeeder::task(track.clone(), active_atomic.clone());
 
         for packet in buf {
             send.send(packet);
@@ -34,12 +25,31 @@ impl TrackFeeder {
         TrackFeeder {
             sender: send,
             track: track,
-            active: true,
+            active: active_atomic,
         }
     }
 
-    // Meant to run in tokio task
-    fn distribute() {}
+    // Creates tokio task for async feeding webrtc track with rtp packets.
+    fn task(track: Arc<TrackLocalStaticRTP>, task_active: Arc<AtomicBool>) -> Sender<Vec<u8>> {
+        let (send, mut recive) = channel::<Vec<u8>>(10);
+
+        tokio::spawn(async move {
+            loop {
+                // Simple: Wait on channel reciever...
+                let packet = recive.recv().await.unwrap();
+
+                // If discarded, end the task.
+                if !task_active.load(Relaxed) {
+                    break;
+                }
+
+                // If not discarded, directly write the incoming packet to webrtc track
+                track.write(&packet).await.unwrap();
+            }
+        });
+
+        send
+    }
 
     pub fn track() {}
 
@@ -47,11 +57,11 @@ impl TrackFeeder {
         self.sender.send(packet);
     }
 
-    pub fn discard(&mut self) {
-        self.active = false;
+    pub fn discard(&self) {
+        self.active.store(false, Relaxed);
     }
 
     pub fn is_active(&self) -> bool {
-        self.active
+        self.active.load(Relaxed)
     }
 }
