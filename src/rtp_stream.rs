@@ -66,6 +66,20 @@ impl RtpStream {
             let sdp_socket = join_multicast(&mcast_addr).unwrap().unwrap();
             let sdp_socket = UdpSocket::from_std(sdp_socket).unwrap();
             
+            // TODO: Need seperate task to rx SDP packets.
+            // 1. RX SDP on multicast
+            // 2. Hash incoming SDP (port+ip)
+            // 3. Init new rtp_stream if new stream
+
+            // RTP_stream
+            // 1. Init with raw SDP
+            // 2. Parse protocol, port, address
+            // 3. Connect to RTP port with reuseaddr enabled
+            // 4. Init FFProbe instance
+            //  a. Create UDP socket
+            //  b. Start ffprobe on that socket
+            //  c. Pass SDP through SAP
+            // 5. Start parsing FFProbe, and storing RTP packets.
 
             // let sdp_socket = UdpSocket::bind("0.0.0.0:9875").unwrap();
             // sdp_socket.set_broadcast(true).unwrap();
