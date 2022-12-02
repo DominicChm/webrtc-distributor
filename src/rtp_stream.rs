@@ -102,7 +102,12 @@ impl RtpStream {
                     feeder.push(inbound_rtp_packet.clone());
                 }
 
-                check_rtp(&inbound_rtp_packet);
+                /** Testing code */
+                let header = RtpReader::new(&inbound_rtp_packet).unwrap();
+                let mut pld = header.payload().to_vec();
+                pld.truncate(5);
+                println!("type: {}, pld: {:?}", header.payload_type(), pld);
+
 
                 //todo!("Delete old RTP packets from fast forward buffer");
             }
@@ -124,13 +129,6 @@ impl RtpStream {
         // Add to feeder array for future pushes
         f
     }
-}
-
-fn check_rtp(buf: &Vec<u8>) {
-    let header = RtpReader::new(&buf).unwrap();
-    let mut pld = header.payload().to_vec();
-    pld.truncate(5);
-    println!("type: {}, pld: {:?}", header.payload_type(), pld);
 }
 
 fn get_free_port() -> u16 {
