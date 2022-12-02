@@ -1,9 +1,9 @@
 use anyhow::Result;
 use rtp_rs::RtpReader;
-use socket2::{Domain, SockAddr, Socket, Type};
+use socket2::{Domain, Protocol, Socket, Type};
 use std::fmt::format;
-use std::io::Write;
-use std::net::SocketAddr;
+use std::io::{self, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tempfile::NamedTempFile;
@@ -37,7 +37,6 @@ pub struct RtpStream {
     delay: bool,
     ff_packets: Arc<Mutex<Vec<Vec<u8>>>>,
     feeders: Arc<Mutex<Vec<TrackFeeder>>>,
-    sdp_file: NamedTempFile,
 }
 
 impl RtpStream {
@@ -46,20 +45,13 @@ impl RtpStream {
         let ff_packets: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
         let feeders: Arc<Mutex<Vec<TrackFeeder>>> = Arc::new(Mutex::new(Vec::new()));
 
-        let ffprobe_port = get_free_port();
-        println!("FFprobe UDP socket: {}", ffprobe_port);
-
-        let sdp_file = generate_sdp_file(5000, "VP8".to_string()).unwrap();
-        //.into_temp_path().to_str().unwrap().to_string()
-        println!("SDP: {}", sdp_file.path().to_string_lossy());
-        RtpStream::task(ff_packets.clone(), feeders.clone(), port, ffprobe_port);
+        RtpStream::task(ff_packets.clone(), feeders.clone(), port);
 
         RtpStream {
             ffmpeg: None,
             delay: false,
             ff_packets,
             feeders,
-            sdp_file,
         }
     }
 
@@ -67,50 +59,53 @@ impl RtpStream {
         ff_packets: Arc<Mutex<Vec<Vec<u8>>>>,
         feeders: Arc<Mutex<Vec<TrackFeeder>>>,
         ffmpeg_port: u16,
-        ffprobe_port: u16,
     ) {
         tokio::spawn(async move {
             // Open socket
-            let sock = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], ffmpeg_port)));
-            let sock = sock.await.expect("Couldn't open UDP socket!");
+            let mcast_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(224,2,127,254)), 9875);
+            let sdp_socket = join_multicast(&mcast_addr).unwrap().unwrap();
+            let sdp_socket = UdpSocket::from_std(sdp_socket).unwrap();
+            
 
-            // Create a socket to handle communication with an FFProbe instance
-            // FFProbe is used to enable fast forwarding by finding keyframes.
-            let ffprobe_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-            ffprobe_sock
-                .connect(SocketAddr::from(([127, 0, 0, 1], ffprobe_port)))
-                .await
-                .unwrap();
+            // let sdp_socket = UdpSocket::bind("0.0.0.0:9875").unwrap();
+            // sdp_socket.set_broadcast(true).unwrap();
+            // sdp_socket.set_multicast_ttl_v4(128).unwrap();
+            // sdp_socket.join_multicast_v4(&Ipv4Addr::new(224,2,127,254),&Ipv4Addr::UNSPECIFIED).unwrap();
 
-            // TODO: Write SDP
-
-            // TODO: Start ffprobe reader task.
-
-            let mut inbound_rtp_packet = vec![0u8; 1600]; // UDP MTU
-
-            // Read packet continuously
-            while let Ok((n, _)) = sock.recv_from(&mut inbound_rtp_packet).await {
+            
+            println!("Starting socket");
+            let mut buf = vec![0u8; 1600];
+            while let packet = sdp_socket.recv_from(&mut buf).await {
+                match packet {
+                    Ok((n, _)) => {
+                        println!("{}", String::from_utf8(buf[24..n].to_vec()).unwrap());
+                    }
+                    Err(e) => {
+                        println!("{:?}", e);
+                    }
+                }
                 // Store packet in fast forward buffer
-                ff_packets.lock().unwrap().push(inbound_rtp_packet.clone());
-                ffprobe_sock.send(&inbound_rtp_packet).await;
+                // ff_packets.lock().unwrap().push(inbound_rtp_packet.clone());
 
                 // Clear discarded feeders
-                feeders.lock().unwrap().retain(|f| f.is_active());
+                // feeders.lock().unwrap().retain(|f| f.is_active());
 
                 // Push packet to active feeders.
-                for feeder in feeders.lock().unwrap().iter() {
-                    feeder.push(inbound_rtp_packet.clone());
-                }
+                //for feeder in feeders.lock().unwrap().iter() {
+                //    feeder.push(inbound_rtp_packet.clone());
+                //}
 
-                /** Testing code */
-                let header = RtpReader::new(&inbound_rtp_packet).unwrap();
-                let mut pld = header.payload().to_vec();
-                pld.truncate(5);
-                println!("type: {}, pld: {:?}", header.payload_type(), pld);
-
+                /* Testing code */
+                //let header = RtpReader::new(&inbound_rtp_packet).unwrap();
+                //let mut pld = header.payload().to_vec();
+                //pld.truncate(5);
+                //println!("source: type: {}, pld: {:?}", header.payload_type(), pld);
 
                 //todo!("Delete old RTP packets from fast forward buffer");
+
+                //println!()
             }
+            println!("FELL THROUGH LOOP");
         });
     }
 
@@ -130,13 +125,6 @@ impl RtpStream {
         f
     }
 }
-
-fn get_free_port() -> u16 {
-    let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-    sock.local_addr().unwrap().port()
-}
-
-// ./ffprobe lel.sdp -protocol_whitelist rtp,file,udp -show_frames
 
 fn generate_sdp_file(port: u16, protocol: String) -> Result<NamedTempFile> {
     // Setup SDP file template
@@ -160,4 +148,81 @@ fn generate_sdp_file(port: u16, protocol: String) -> Result<NamedTempFile> {
         .unwrap();
 
     Ok(temp_file)
+}
+
+// https://github.com/bluejekyll/multicast-example/blob/c3ef3be23e6cf0a9c30900ef40d14b52ccf93efe/src/lib.rs#L45
+
+/*           let sdp_socket = UdpSocket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+           let sdp_multicast_ip = Ipv4Addr::new(224, 2, 127, 254);
+
+           sdp_socket.join_multicast_v4(&sdp_multicast_ip, &Ipv4Addr::new(0, 0, 0, 0));
+           let bindaddr = SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0);
+
+           sdp_socket.set_reuse_address(true);
+           sdp_socket.bind(&SockAddr::from(bindaddr));
+           // TODO: Start ffprobe reader task.
+
+           let mut buf = std::mem::MaybeUninit::new(vec![0u8; 1600]); // UDP MTU
+           tokio::net::UdpSocket::from(sdp_socket.std);
+           // Read packet continuously
+
+*/
+
+#[cfg(unix)]
+fn bind_multicast(socket: &Socket, addr: &SocketAddr) -> io::Result<()> {
+    socket.bind(&socket2::SockAddr::from(*addr))
+}
+
+#[cfg(windows)]
+fn bind_multicast(socket: &Socket, addr: &SocketAddr) -> io::Result<()> {
+    use std::net::Ipv6Addr;
+
+    let addr = match *addr {
+        SocketAddr::V4(addr) => SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), addr.port()),
+        SocketAddr::V6(addr) => {
+            SocketAddr::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0).into(), addr.port())
+        }
+    };
+    socket.bind(&socket2::SockAddr::from(addr))
+}
+
+/// Returns a socket joined to the multicast address
+fn join_multicast(multicast_addr: &SocketAddr) -> Result<Option<std::net::UdpSocket>, io::Error> {
+    let ip_addr = multicast_addr.ip();
+    if !ip_addr.is_multicast() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("expected multicast address for binding: {}", ip_addr),
+        ));
+    }
+
+    let socket = match ip_addr {
+        IpAddr::V4(ref mdns_v4) => {
+            let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
+                .expect("ipv4 dgram socket");
+            socket
+                .join_multicast_v4(mdns_v4, &Ipv4Addr::new(0, 0, 0, 0))
+                .expect("join_multicast_v4");
+            socket
+        }
+        IpAddr::V6(ref mdns_v6) => {
+            let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))
+                .expect("ipv6 dgram socket");
+
+            socket.set_only_v6(true)?;
+            socket
+                .join_multicast_v6(mdns_v6, 0)
+                .expect("join_multicast_v6");
+            socket
+        }
+    };
+
+    socket.set_nonblocking(true).expect("nonblocking Error");
+    socket.set_reuse_address(true).expect("reuse addr Error");
+    #[cfg(unix)] // this is currently restricted to Unix's in socket2
+    socket.set_reuse_port(true).expect("reuse port Error");
+    bind_multicast(&socket, &multicast_addr).expect("bind Error");
+
+    let udp: std::net::UdpSocket = socket.into();
+    Ok(Some(udp))
 }
