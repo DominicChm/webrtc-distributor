@@ -2493,6 +2493,8 @@ name = "webrtc-distributorv2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "lazy_static",
+ "regex",
  "rouille",
  "rtp-rs",
  "serde",
