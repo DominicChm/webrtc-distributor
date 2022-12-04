@@ -13,6 +13,7 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+use webrtc::sdp::SessionDescription;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 use webrtc::Error;
@@ -28,9 +29,12 @@ impl StreamPeer {
     pub async fn new(offer: RTCSessionDescription) -> StreamPeer {
         let mut m = MediaEngine::default();
         m.register_default_codecs().unwrap();
+    
 
         let mut registry = Registry::new();
         registry = register_default_interceptors(registry, &mut m).unwrap();
+
+        
 
         let video_track = Arc::new(TrackLocalStaticRTP::new(
             RTCRtpCodecCapability {

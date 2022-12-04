@@ -12,7 +12,6 @@ use structopt::StructOpt;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 mod client;
 mod net_util;
-mod sdp;
 mod stream_manager;
 #[derive(Debug, StructOpt)]
 #[structopt(name = "example", about = "An example of StructOpt usage.")]
@@ -64,6 +63,7 @@ async fn main() {
 
 async fn add_client() {}
 
+
 // ./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=1 -vcodec libvpx -cpu-used 5 -deadline 1 -g 3 -error-resilient 1 -auto-alt-ref 1 -f rtp rtp://127.0.0.1:5000?pkt_size=1200
 // ./ffprobe lel.sdp -protocol_whitelist rtp,file,udp -show_frames
 
@@ -73,3 +73,10 @@ async fn add_client() {}
 // ./ffprobe -f sap sap://224.2.127.254 -show_frames
 
 //////// ./ffprobe -f sap sap://224.2.127.254 -show_frames -show_entries frame=key_frame -print_format csv -loglevel panic
+
+
+// Remux:
+// ./ffmpeg -re -i sap:// -vcodec copy -f rtp rtp://127.0.0.1:9553?pkt_size=1316
+
+
+// ./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=1 -vcodec libvpx -cpu-used 5 -deadline 1 -g 3 -error-resilient 1 -auto-alt-ref 1 -f rtp rtp://127.0.0.1:5000?pkt_size=1200

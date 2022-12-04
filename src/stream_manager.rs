@@ -7,16 +7,16 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     string::ParseError,
 };
+use webrtc::rtcp::packet;
 
 use crate::{
     net_util::{join_multicast, listen_udp},
     rtp_stream::RtpStream,
-    sdp::Sdp,
 };
 
 #[derive(Clone)]
 pub struct StreamManager {
-    streams: HashMap<Sdp, u128>,
+    //streams: HashMap<Sdp, u128>,
 }
 impl StreamManager {
     pub fn new(mcast_ip: IpAddr, mcast_port: u16) {
@@ -24,7 +24,7 @@ impl StreamManager {
         let sap_socket = listen_udp(&mcast_addr).expect("open SDP socket");
         let sap_socket = tokio::net::UdpSocket::from_std(sap_socket).expect("convert std to tokio");
         tokio::spawn(async move {
-            let mut streams: HashMap<Sdp, RtpStream> = HashMap::new();
+            let mut streams: HashMap<Vec<u8>, RtpStream> = HashMap::new();
             // Open socket
 
             // TODO: Need seperate task to rx SDP packets.
@@ -37,13 +37,13 @@ impl StreamManager {
             while let packet = sap_socket.recv_from(&mut buf).await {
                 match packet {
                     Ok((n, _)) => {
-                        let str = String::from_utf8(buf[24..n].to_vec()).expect("sdp to string");
-                        let sdp = crate::sdp::parse_sdp(str);
-                        
-                        if !streams.contains_key(&sdp) {
-                            println!("Received unique SDP: {:?}", sdp);
-                            let s = RtpStream::new(sdp.clone());
-                            streams.insert(sdp, s);
+                        let trimmed = buf[..n].to_vec();
+
+                        if !streams.contains_key(&trimmed) {
+                            println!("Received unique SDP. Initializing new stream.");
+                            let s = RtpStream::new(sap_to_sdp(&buf[..n]));
+
+                            streams.insert(trimmed, s);
                             // TODO: ATTACH LISTENERS
                         }
                     }
@@ -57,3 +57,6 @@ impl StreamManager {
 }
 // Ipv4Addr::new(224,2,127,254)
 // 9875
+pub fn sap_to_sdp(buf: &[u8]) -> String {
+    String::from_utf8(buf[24..].to_vec()).expect("sdp to string")
+}

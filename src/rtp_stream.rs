@@ -2,43 +2,50 @@ use anyhow::Result;
 use rtp_rs::RtpReader;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::fmt::format;
+use std::future;
 use std::io::{self, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::thread;
-use tempfile::NamedTempFile;
+use std::thread::{self, yield_now};
+use tempfile::{tempdir, NamedTempFile};
 use tinytemplate::TinyTemplate;
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, BufReader, AsyncBufReadExt};
 use tokio::net::UdpSocket;
+use tokio::process::{ChildStdout, Command};
+use tokio::select;
+use tokio::time::{sleep, Sleep};
 use webrtc::api::media_engine::MIME_TYPE_VP8;
+use webrtc::interceptor::twcc::receiver::Receiver;
+use webrtc::rtcp::packet::Packet;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+use webrtc::sdp::SessionDescription;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::TrackLocalWriter;
 
-use crate::sdp::Sdp;
+use crate::net_util::listen_udp;
 use crate::track_feeder::{self, TrackFeeder};
 
 use super::ffmpeg::FFmpeg;
 use super::stream_peer::StreamPeer;
 
 pub struct RtpStream {
-    ffmpeg: Option<FFmpeg>,
     delay: bool,
     ff_packets: Arc<Mutex<Vec<Vec<u8>>>>,
     feeders: Arc<Mutex<Vec<TrackFeeder>>>,
 }
 
 impl RtpStream {
-    pub fn new(sdp: Sdp) -> RtpStream {
+    pub fn new(sdp: String) -> RtpStream {
         // Distribute to feeders
         let ff_packets: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
         let feeders: Arc<Mutex<Vec<TrackFeeder>>> = Arc::new(Mutex::new(Vec::new()));
 
-        //RtpStream::task(ff_packets.clone(), feeders.clone(), sdp.streams[0].port);
+        RtpStream::task(ff_packets.clone(), feeders.clone(), sdp);
 
         RtpStream {
-            ffmpeg: None,
             delay: false,
             ff_packets,
             feeders,
@@ -48,16 +55,15 @@ impl RtpStream {
     fn task(
         ff_packets: Arc<Mutex<Vec<Vec<u8>>>>,
         feeders: Arc<Mutex<Vec<TrackFeeder>>>,
-        ffmpeg_port: u16,
+        sdp: String,
     ) {
         tokio::spawn(async move {
             // Open socket
 
-            // TODO: Need seperate task to rx SDP packets.
-            // 1. RX SDP on multicast
-            // 2. Hash incoming SDP (port+ip)
-            // 3. Init new rtp_stream if new stream
+            // Initialize the ffmpeg remuxer.
+            // remuxer_sdp.media_descriptions[0]
 
+            //RtpStream::init_ffprobe(sdp).await;
             // RTP_stream
             // 1. Init with raw SDP
             // 2. Parse protocol, port, address
@@ -68,33 +74,48 @@ impl RtpStream {
             //  c. Pass SDP through SAP
             // 5. Start parsing FFProbe, and storing RTP packets.
 
-            // let sdp_socket = UdpSocket::bind("0.0.0.0:9875").unwrap();
-            // sdp_socket.set_broadcast(true).unwrap();
-            // sdp_socket.set_multicast_ttl_v4(128).unwrap();
-            // sdp_socket.join_multicast_v4(&Ipv4Addr::new(224,2,127,254),&Ipv4Addr::UNSPECIFIED).unwrap();
+            // Init ffprobe once we're bound with a REUSEADDR port.
 
+            let (remuxer_addr, mut ffprobe, codec) = tokio::join!(
+                RtpStream::init_remuxer(sdp),
+                RtpStream::ffprobe_frames(),
+                RtpStream::ffprobe_codec()
+            );
 
-            println!("Starting socket");
+            println!("FOUND CODEC: {}", codec);
+
+            println!("Binding to remuxer at {}", remuxer_addr);
+            let remuxer_sock = listen_udp(&remuxer_addr).unwrap();
+            let remuxer_sock = UdpSocket::from_std(remuxer_sock).unwrap();
+
             let mut buf = vec![0u8; 1600];
-            // while let packet = sdp_socket.recv_from(&mut buf).await {
-            //     match packet {
-            //         Ok((n, _)) => {
-            //             println!("{}", String::from_utf8(buf[24..n].to_vec()).unwrap());
-            //         }
-            //         Err(e) => {
-            //             println!("{:?}", e);
-            //         }
-            //     }
-                // Store packet in fast forward buffer
-                // ff_packets.lock().unwrap().push(inbound_rtp_packet.clone());
+            let mut probe_line = String::new();
+            loop {
+                select! {
+                    biased;
+                    
+                    n = ffprobe.read_line(&mut probe_line) => {
+                        println!("{}", probe_line);
+                    }
+                    Ok((n, origin)) = remuxer_sock.recv_from(&mut buf) => {
 
-                // Clear discarded feeders
-                // feeders.lock().unwrap().retain(|f| f.is_active());
+                        let trimmed = buf[..n].to_vec();
+                        println!("{}", n);
+                        // Store packet in fast forward buffer
+                        ff_packets.lock().unwrap().push(trimmed.clone());
 
-                // Push packet to active feeders.
-                //for feeder in feeders.lock().unwrap().iter() {
-                //    feeder.push(inbound_rtp_packet.clone());
-                //}
+                        // Clear discarded feeders
+                        feeders.lock().unwrap().retain(|f| f.is_active());
+
+                        // Push packet to active feeders.
+                        for feeder in feeders.lock().unwrap().iter() {
+                            feeder.push(trimmed.clone());
+                        }
+
+                    },
+
+                }
+                //let packet_descriptor = ffprobe.
 
                 /* Testing code */
                 //let header = RtpReader::new(&inbound_rtp_packet).unwrap();
@@ -103,11 +124,81 @@ impl RtpStream {
                 //println!("source: type: {}, pld: {:?}", header.payload_type(), pld);
 
                 //todo!("Delete old RTP packets from fast forward buffer");
-
-                //println!()
-            //}
-            println!("FELL THROUGH LOOP");
+            }
+            //println!("FELL THROUGH LOOP");
         });
+    }
+
+    // ./ffprobe -f sap sap://224.2.127.254 -show_frames -show_entries frame=key_frame -print_format csv -loglevel panic
+    pub async fn ffprobe_frames() -> BufReader<ChildStdout> {
+        println!("Initializing ffprobe");
+
+        let proc = Command::new("./ffprobe")
+            .args(["-loglevel", "fatal"])
+            .args(["-f", "sdp", "./extstream"])
+            .args(["-protocol_whitelist", "rtp,file,udp"])
+            .args(["-show_entries", "frame=pkt_size,key_frame"])
+            .args(["-print_format", "csv"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("ffprobe start failure");
+
+        BufReader::new(proc.stdout.unwrap())
+    }
+
+    pub async fn ffprobe_codec() -> String {
+        println!("Running ffprobe for stream");
+
+        let out = Command::new("./ffprobe")
+            .args(["-loglevel", "panic"])
+            .args(["-f", "sdp", "./extstream"])
+            .args(["-protocol_whitelist", "rtp,file,udp"])
+            .args(["-show_entries", "stream=codec_name"])
+            .args(["-print_format", "csv"])
+            .output()
+            .await
+            .expect("ffprobe start failure")
+            .stdout;
+
+        // Convert CSV output into a raw name
+        String::from_utf8(out)
+            .expect("Error parsing ffprobe output??")
+            .rsplit_once(",")
+            .expect("Unable to get split...")
+            .1
+            .to_string()
+    }
+
+    // ./ffmpeg -f sdp -protocol_whitelist rtp,file,udp -i lel.sdp
+    // ./ffmpeg -re -i sap:// -vcodec copy -f rtp rtp://127.0.0.1:9553?pkt_size=1316
+    pub async fn init_remuxer(sdp: String) -> SocketAddr {
+        println!("Initializing remuxer");
+
+        tokio::fs::remove_file("./extstream").await.ok();
+
+        let addr = SocketAddr::new(
+            IpAddr::from(Ipv4Addr::LOCALHOST),
+            portpicker::pick_unused_port().unwrap(),
+        );
+
+        let mut ext_sdp = File::create("./extstream").await.expect("file create");
+        ext_sdp.write_all(&sdp.as_bytes()).await.expect("Write SDP");
+        drop(ext_sdp); // close external sdp
+
+        let proc = Command::new("./ffmpeg")
+            .args(["-loglevel", "fatal"])
+            .args(["-protocol_whitelist", "rtp,file,udp"])
+            .args(["-f", "sdp"])
+            .args(["-i", "extstream"])
+            .args(["-vcodec", "copy"])
+            //.args(["-sdp_file", "internal.sdp"])
+            .args(["-f", "rtp"])
+            .args(["-loglevel", "fatal"])
+            .arg(format!("rtp://{}?pkt_size=1316", addr))
+            .spawn()
+            .expect("remuxer start failure");
+
+        addr
     }
 
     pub fn new_with_ffmpeg() -> RtpStream {
@@ -145,3 +236,9 @@ impl RtpStream {
 
 */
 
+async fn block_for_file(file: PathBuf) -> File {
+    while let Err(_) = tokio::fs::File::open(&file).await {
+        tokio::task::yield_now().await;
+    }
+    tokio::fs::File::open(file).await.unwrap()
+}
