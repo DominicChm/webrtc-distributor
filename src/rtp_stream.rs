@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bytes::Buf;
 use rtp_rs::RtpReader;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::fmt::format;
@@ -12,7 +13,7 @@ use std::thread::{self, yield_now};
 use tempfile::{tempdir, NamedTempFile};
 use tinytemplate::TinyTemplate;
 use tokio::fs::File;
-use tokio::io::{AsyncWriteExt, BufReader, AsyncBufReadExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UdpSocket;
 use tokio::process::{ChildStdout, Command};
 use tokio::select;
@@ -24,6 +25,7 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::sdp::SessionDescription;
 use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::TrackLocalWriter;
+use webrtc::util::Unmarshal;
 
 use crate::net_util::listen_udp;
 use crate::track_feeder::{self, TrackFeeder};
@@ -83,7 +85,7 @@ impl RtpStream {
             );
 
             println!("FOUND CODEC: {}", codec);
-
+            //let remuxer_addr = "239.7.69.7:5002".parse::<SocketAddr>().unwrap();
             println!("Binding to remuxer at {}", remuxer_addr);
             let remuxer_sock = listen_udp(&remuxer_addr).unwrap();
             let remuxer_sock = UdpSocket::from_std(remuxer_sock).unwrap();
@@ -93,14 +95,16 @@ impl RtpStream {
             loop {
                 select! {
                     biased;
-                    
+
                     n = ffprobe.read_line(&mut probe_line) => {
-                        println!("{}", probe_line);
+                        println!("FRAME: {}", probe_line);
                     }
                     Ok((n, origin)) = remuxer_sock.recv_from(&mut buf) => {
+                        let mut trimmed = buf[..n].to_vec();
+                        let mut b: &[u8] = &trimmed;
 
-                        let trimmed = buf[..n].to_vec();
-                        println!("{}", n);
+                        let pkt = webrtc::rtp::packet::Packet::unmarshal(&mut b).unwrap();
+
                         // Store packet in fast forward buffer
                         ff_packets.lock().unwrap().push(trimmed.clone());
 
@@ -134,6 +138,7 @@ impl RtpStream {
         println!("Initializing ffprobe");
 
         let proc = Command::new("./ffprobe")
+            .args(["-probesize", "32"])
             .args(["-loglevel", "fatal"])
             .args(["-f", "sdp", "./extstream"])
             .args(["-protocol_whitelist", "rtp,file,udp"])
@@ -150,6 +155,7 @@ impl RtpStream {
         println!("Running ffprobe for stream");
 
         let out = Command::new("./ffprobe")
+            .args(["-probesize", "32"])
             .args(["-loglevel", "panic"])
             .args(["-f", "sdp", "./extstream"])
             .args(["-protocol_whitelist", "rtp,file,udp"])
@@ -171,6 +177,17 @@ impl RtpStream {
 
     // ./ffmpeg -f sdp -protocol_whitelist rtp,file,udp -i lel.sdp
     // ./ffmpeg -re -i sap:// -vcodec copy -f rtp rtp://127.0.0.1:9553?pkt_size=1316
+    // https://stackoverflow.com/questions/16658873/how-to-minimize-the-delay-in-a-live-streaming-with-ffmpeg
+    // https://trac.ffmpeg.org/wiki/StreamingGuide#Latency
+    // https://stackoverflow.com/questions/60462840/ffmpeg-delay-in-decoding-h264
+    // https://stackoverflow.com/questions/65102404/how-to-transfer-video-as-rtp-stream-with-least-delay-by-ffmpeg
+    // https://trac.ffmpeg.org/ticket/3354
+
+    // Note: This remux introduces a frame of latency. Nothing you can do about it as far as I can tell.
+    // It's a tradeoff between user-friendliness, and absolute performance.
+    // It would be possible to avoid the remux if users could mux directly to
+    // RTP with a 1200 packet size, but using SAP doesn't pass through RTP settings like packet_size.
+    // Not using SAP would require manually moving an SDP from client to server, which isn't tenable.
     pub async fn init_remuxer(sdp: String) -> SocketAddr {
         println!("Initializing remuxer");
 
@@ -178,23 +195,32 @@ impl RtpStream {
 
         let addr = SocketAddr::new(
             IpAddr::from(Ipv4Addr::LOCALHOST),
-            portpicker::pick_unused_port().unwrap(),
+            7690, //portpicker::pick_unused_port().unwrap(),
         );
 
         let mut ext_sdp = File::create("./extstream").await.expect("file create");
         ext_sdp.write_all(&sdp.as_bytes()).await.expect("Write SDP");
         drop(ext_sdp); // close external sdp
 
-        let proc = Command::new("./ffmpeg")
+        Command::new("./ffmpeg")
+            // General Settings
+            .args(["-probesize", "32"])
             .args(["-loglevel", "fatal"])
+            .args(["-threads", "1"])
+            .args(["-fflags", "+flush_packets+nobuffer+discardcorrupt"])
+            .args(["-avioflags", "direct"])
+            .args(["-flags", "low_delay"])
+            // Input
             .args(["-protocol_whitelist", "rtp,file,udp"])
             .args(["-f", "sdp"])
             .args(["-i", "extstream"])
+            // Output
             .args(["-vcodec", "copy"])
-            //.args(["-sdp_file", "internal.sdp"])
             .args(["-f", "rtp"])
-            .args(["-loglevel", "fatal"])
-            .arg(format!("rtp://{}?pkt_size=1316", addr))
+            .args(["-packetsize", "1200"])
+            .args(["-flags", "low_delay"])
+            .args(["-fflags", "+flush_packets"])
+            .arg(format!("rtp://{}", addr))
             .spawn()
             .expect("remuxer start failure");
 
@@ -217,6 +243,9 @@ impl RtpStream {
         f
     }
 }
+
+// https://stackoverflow.com/questions/1957427/detect-mpeg4-h264-i-frame-idr-in-rtp-stream
+// https://stackoverflow.com/questions/38795036/detect-vp8-key-framei-frame-in-rtp-stream
 
 // https://github.com/bluejekyll/multicast-example/blob/c3ef3be23e6cf0a9c30900ef40d14b52ccf93efe/src/lib.rs#L45
 
@@ -242,3 +271,5 @@ async fn block_for_file(file: PathBuf) -> File {
     }
     tokio::fs::File::open(file).await.unwrap()
 }
+
+// ./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=1 -vcodec libx264 -b:v 200k -cpu-used 5 -g 3 -f sap -packet_size 1000 sap://239.7.69.7:5002

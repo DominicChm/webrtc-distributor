@@ -21,6 +21,14 @@ struct Opt {
     offer: String,
 }
 
+struct Config {
+
+}
+
+struct StreamDef {
+
+}
+
 #[tokio::main]
 async fn main() {
     //let opt = Opt::from_args();
@@ -29,7 +37,7 @@ async fn main() {
 
     //let mut client = client::Client::new(offer).await;
 
-    let sm = StreamManager::new(std::net::IpAddr::V4(Ipv4Addr::new(224, 2, 127, 254)), 9875);
+    //let sm = StreamManager::new(std::net::IpAddr::V4(Ipv4Addr::new(224, 2, 127, 254)), 9875);
     //let stream = rtp_stream::RtpStream::new(5000);
 
     //client.set_track_stream(0, &stream);
