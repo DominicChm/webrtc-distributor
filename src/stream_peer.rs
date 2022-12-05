@@ -18,7 +18,7 @@ use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 use webrtc::Error;
 
-use crate::rtp_stream::RtpStream;
+use crate::rtp_track::RtpTrack;
 
 pub struct StreamPeer {
     api: Arc<API>,

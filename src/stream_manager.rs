@@ -1,6 +1,8 @@
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::collections::HashSet;
 use std::hash::Hash;
+use std::sync::Arc;
 use std::{
     collections::{BTreeMap, HashMap},
     io::Error,
@@ -11,49 +13,52 @@ use webrtc::rtcp::packet;
 
 use crate::{
     net_util::{join_multicast, listen_udp},
-    rtp_stream::RtpStream,
+    rtp_track::RtpTrack,
 };
+use crate::{rtp_track, StreamDef, TrackDef};
 
-#[derive(Clone)]
-pub struct StreamManager {
-    //streams: HashMap<Sdp, u128>,
+pub struct Stream {
+    pub video: Option<RtpTrack>,
+    pub audio: Option<RtpTrack>,
 }
+pub struct StreamManager {
+    streams: HashMap<StreamDef, Arc<Stream>>,
+}
+
 impl StreamManager {
-    pub fn new(mcast_ip: IpAddr, mcast_port: u16) {
-        let mcast_addr = SocketAddr::new(mcast_ip, mcast_port);
-        let sap_socket = listen_udp(&mcast_addr).expect("open SDP socket");
-        let sap_socket = tokio::net::UdpSocket::from_std(sap_socket).expect("convert std to tokio");
-        tokio::spawn(async move {
-            let mut streams: HashMap<Vec<u8>, RtpStream> = HashMap::new();
-            // Open socket
-
-            // TODO: Need seperate task to rx SDP packets.
-            // 1. RX SDP on multicast
-            // 2. Hash incoming SDP (port+ip)
-            // 3. Init new rtp_stream if new stream
-
-            println!("Listening for SAP announcements on {}", mcast_addr);
-            let mut buf = vec![0u8; 1600];
-            while let packet = sap_socket.recv_from(&mut buf).await {
-                match packet {
-                    Ok((n, _)) => {
-                        let trimmed = buf[..n].to_vec();
-
-                        if !streams.contains_key(&trimmed) {
-                            println!("Received unique SDP. Initializing new stream.");
-                            let s = RtpStream::new(sap_to_sdp(&buf[..n]));
-
-                            streams.insert(trimmed, s);
-                            // TODO: ATTACH LISTENERS
-                        }
-                    }
-                    Err(e) => {
-                        println!("{:?}", e);
-                    }
-                }
-            }
-        });
+    pub fn new() -> StreamManager {
+        StreamManager {
+            streams: HashMap::new(),
+        }
     }
+
+    pub fn sync_tracks(&mut self, stream_defs: Vec<StreamDef>) {
+        let current_streams: HashSet<StreamDef> = self.streams.keys().cloned().collect();
+        let incoming_streams: HashSet<StreamDef> = HashSet::from_iter(stream_defs.iter().cloned());
+
+        let created_streams = incoming_streams.difference(&current_streams);
+
+        // Instantiate new streams
+        for stream in created_streams {
+            self.create_stream(stream.clone());
+        }
+
+        let deleted_streams = current_streams.difference(&incoming_streams);
+
+        // Delete old ones
+        for stream in deleted_streams {}
+    }
+
+    pub fn create_stream(&mut self, stream: StreamDef) -> Arc<Stream> {
+        let video = stream.video.as_ref().map(|t| RtpTrack::new(&t, &stream));
+        let audio = stream.audio.as_ref().map(|t| RtpTrack::new(&t, &stream));
+
+        let s = Arc::new(Stream { video, audio });
+        self.streams.insert(stream, s.clone());
+        s
+    }
+
+    pub fn delete_stream(&self, def: StreamDef) {}
 }
 // Ipv4Addr::new(224,2,127,254)
 // 9875
