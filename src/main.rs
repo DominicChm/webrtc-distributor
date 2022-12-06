@@ -101,7 +101,8 @@ async fn main() {
 
     // Keep the process alive.
 
-    server::init();
+    let (tx, rx) = server::init();
+
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
     }
@@ -111,9 +112,7 @@ async fn main() {
 
     // let mut input = String::new();
 
-    // std::thread::spawn(move || {
-    //     server::init();
-    // });
+
 
     // std::io::stdin().read_line(&mut input)?;
 
