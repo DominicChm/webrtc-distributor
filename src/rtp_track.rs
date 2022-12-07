@@ -1,36 +1,12 @@
-use crate::buffered_track::{self, BufferedTrack};
+use crate::buffered_track::BufferedTrack;
 use crate::net_util::listen_udp;
 use crate::{StreamDef, TrackDef};
-use anyhow::Result;
-use bytes::Buf;
-use rtp_rs::RtpReader;
-use socket2::{Domain, Protocol, Socket, Type};
-use std::collections::HashSet;
-use std::fmt::format;
-use std::future;
-use std::io::{self, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::ops::BitAnd;
-use std::path::PathBuf;
-use std::process::Stdio;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, yield_now};
-use tempfile::{tempdir, NamedTempFile};
-use tinytemplate::TinyTemplate;
-use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UdpSocket;
-use tokio::process::{ChildStdout, Command};
-use tokio::select;
 use tokio::sync::broadcast::{self, Receiver, Sender};
-use tokio::time::{sleep, Sleep};
 use webrtc::api::media_engine::{MIME_TYPE_H264, MIME_TYPE_VP8};
-use webrtc::interceptor::report::receiver;
 use webrtc::rtp::packet::Packet;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::sdp::SessionDescription;
-use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
-use webrtc::track::track_local::TrackLocalWriter;
 use webrtc::util::Unmarshal;
 
 pub struct RtpTrack {
@@ -79,20 +55,18 @@ impl RtpTrack {
                     let trimmed = buf[..n].to_vec();
 
                     if n > 1200 {
-                        println!("ERROR: Received an RTP packet greater than 1200 bytes! Make sure your format address specifies a max packet size of 1200!! (Hint: try adding `-pkt_size 1200` after `-f rtp`)");
+                        println!("ERROR: Received an RTP packet greater than 1200 bytes! Make sure your format address specifies a max packet size of 1200!! (Hint: try adding `-pkt_size 1200` to your FFMPEG command)");
                         break;
                     }
 
                     let mut b: &[u8] = &trimmed;
-                    let pkt = Packet::unmarshal(&mut b).unwrap();
-
-                    let a = Arc::new(pkt);
+                    let pkt = Arc::new(Packet::unmarshal(&mut b).unwrap());
 
                     // If passed a FF buffer, handle FF buffering
                     if let Some(ff) = ff_packets.clone() {
                         let mut ff = ff.lock().unwrap();
 
-                        let is_kf = is_keyframe(&a.clone(), &def);
+                        let is_kf = is_keyframe(&pkt.clone(), &def);
                         let kf_debounced = ff.len() == 0 || !is_keyframe(&ff.last().unwrap(), &def);
 
                         // Reset fast-forward buffer on new GOP/keyframe.
@@ -101,14 +75,14 @@ impl RtpTrack {
                         }
 
                         // Store new packet in fast forward buffer
-                        ff.push(a.clone());
+                        ff.push(pkt.clone());
                     }
 
                     // Broadcast the packet
 
-                    match send.send(a) {
+                    match send.send(pkt) {
                         Err(e) => println!("BROADCAST ERR: {}", e),
-                        _ => ()
+                        _ => (),
                     }
                 } else {
                     println!("Problem receiving from UDP socket");
@@ -200,6 +174,5 @@ fn is_keyframe(pkt: &Packet, def: &TrackDef) -> bool {
            // Read packet continuously
 
 */
-
 
 // ./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=1 -vcodec libx264 -b:v 200k -cpu-used 5 -g 3 -f sap -packet_size 1000 sap://239.7.69.7:5002

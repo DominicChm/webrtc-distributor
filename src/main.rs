@@ -1,7 +1,7 @@
 mod api;
 
 mod rtp_track;
-mod server;
+//mod server;
 mod stream_peer;
 mod buffered_track;
 use std::net::{IpAddr, Ipv4Addr};
@@ -101,7 +101,7 @@ async fn main() {
 
     // Keep the process alive.
 
-    let (tx, rx) = server::init();
+   // let (tx, rx) = server::init();
 
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
