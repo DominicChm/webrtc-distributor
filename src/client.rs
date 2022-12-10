@@ -3,8 +3,15 @@
 */
 
 use anyhow::Result;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{broadcast, Mutex};
+use bytes::buf;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tokio::{
+    select,
+    sync::{broadcast, watch, Mutex, RwLock},
+};
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors,
@@ -22,11 +29,17 @@ use webrtc::{
 
 use crate::{buffered_track::BufferedTrack, stream_manager::Stream, StreamDef, TrackDef};
 
+#[derive(Clone)]
+struct TrackedStream {
+    stream: Arc<Stream>,
+    sender: Arc<RTCRtpSender>,
+    buffer: Arc<BufferedTrack>,
+}
 pub struct Client {
-    tracks: HashMap<TrackDef, BufferedTrack>,
+    streams: Arc<RwLock<HashMap<StreamDef, TrackedStream>>>,
     peer_connection: Arc<RTCPeerConnection>,
-    assert_peer_status: Arc<tokio::sync::watch::Sender<bool>>,
-    peer_status: tokio::sync::watch::Receiver<bool>,
+    peer_status: watch::Receiver<RTCPeerConnectionState>,
+    offer_response: RwLock<Option<RTCSessionDescription>>,
 }
 
 impl Client {
@@ -48,67 +61,97 @@ impl Client {
 
         let config = RTCConfiguration {
             ice_servers: vec![RTCIceServer {
-                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                // urls: vec!["stun:stun.l.google.com:19302".to_owned()],
                 ..Default::default()
             }],
             ..Default::default()
         };
 
+        // Create this client's peer connection
         let peer_connection = Arc::new(api.new_peer_connection(config).await.unwrap());
 
-        let (assert_peer_status, peer_status) = tokio::sync::watch::channel(false);
-        let assert_peer_status = Arc::new(assert_peer_status);
-        Client {
-            tracks: HashMap::new(),
-            peer_connection,
-            peer_status,
-            assert_peer_status,
-        }
-    }
-
-    // TODO: Error handling
-    pub async fn offer(&self, offer: RTCSessionDescription) -> RTCSessionDescription {
-        self.peer_connection
-            .on_ice_connection_state_change(Box::new(
-                move |connection_state: RTCIceConnectionState| {
-                    println!("Connection State has changed {}", connection_state);
-                    if connection_state == RTCIceConnectionState::Failed {
-                        println!("Connection to peer failed!");
-                    }
-                    Box::pin(async {})
-                },
-            ));
+        // Register handlers
+        peer_connection.on_ice_connection_state_change(Box::new(
+            move |connection_state: RTCIceConnectionState| {
+                println!("Connection State has changed {}", connection_state);
+                if connection_state == RTCIceConnectionState::Failed {
+                    println!("Connection to peer failed!");
+                }
+                Box::pin(async {})
+            },
+        ));
 
         // Set the handler for Peer connection state
         // This will notify you when the peer has connected/disconnected
-        let a = self.assert_peer_status.clone();
-        self.peer_connection
-            .on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-                println!("Peer Connection State has changed: {}", s);
+        let (watch_tx, peer_status) = tokio::sync::watch::channel(RTCPeerConnectionState::Closed);
 
-                if s == RTCPeerConnectionState::Failed {
-                    println!("Peer Connection has gone to failed exiting: Done forwarding");
-                }
-
-                if s == RTCPeerConnectionState::Connected {
-                    a.send(true).unwrap();
-                }
-
+        peer_connection.on_peer_connection_state_change(Box::new(
+            move |s: RTCPeerConnectionState| {
+                watch_tx.send(s).unwrap();
                 Box::pin(async {})
-            }));
+            },
+        ));
+
+        let c = Client {
+            streams: Arc::new(RwLock::new(HashMap::new())),
+            peer_connection,
+            peer_status,
+            offer_response: RwLock::new(None),
+        };
+
+        c.task_track_controller();
+
+        c
+    }
+
+    // Task for asynchronously controller internal track buffers
+    // based on connection state
+    pub fn task_track_controller(&self) {
+        let mut ps = self.peer_status.clone();
+        let streams = self.streams.clone();
+        tokio::spawn(async move {
+            loop {
+                ps.changed().await.unwrap();
+                let state = ps.borrow().clone();
+                match state {
+                    RTCPeerConnectionState::Connected => {
+                        let streams_lock = streams.read().await;
+                        println!("CONNECTION - resuming {} streams", streams_lock.len());
+                        for s in streams_lock.values() {
+                            s.buffer.resume().await;
+                        }
+                    }
+                    RTCPeerConnectionState::New => {
+                        println!("NEW CONNECTION");
+                    }
+                    RTCPeerConnectionState::Disconnected => {
+                        println!("DISCONNECTION");
+                    }
+                    RTCPeerConnectionState::Failed => {
+                        // Clean up
+                        break;
+                    }
+                    s => println!("CONNECTION STATE CHANGE: {:?}", s),
+                }
+            }
+        });
+    }
+    // TODO: Error handling
+    pub async fn signal(&self, offer: RTCSessionDescription) -> RTCSessionDescription {
+        println!("Signalling");
 
         // Set the remote SessionDescription
         self.peer_connection
             .set_remote_description(offer)
             .await
-            .expect("OFFER ERROR: set_remote_description");
+            .expect("SIGNAL ERROR: set_remote_description");
 
         // Create an answer
         let answer = self
             .peer_connection
             .create_answer(None)
             .await
-            .expect("OFFER ERROR: create_answer");
+            .expect("SIGNAL ERROR: create_answer");
 
         // Create channel that is blocked until ICE Gathering is complete
         let mut gather_complete = self.peer_connection.gathering_complete_promise().await;
@@ -117,7 +160,7 @@ impl Client {
         self.peer_connection
             .set_local_description(answer)
             .await
-            .expect("OFFER ERROR: set_local_description");
+            .expect("SIGNAL ERROR: set_local_description");
 
         // Block until ICE Gathering is complete, disabling trickle ICE
         // we do this because we only can exchange one signaling message
@@ -127,46 +170,59 @@ impl Client {
         // atm. So this only works on local networks for now.
         let _ = gather_complete.recv().await;
 
-        self.peer_connection.local_description().await.unwrap()
+        let r = self.peer_connection.local_description().await.unwrap();
+
+        r
     }
 
     /**
      * Connects this client with the passed stream.
      * Both the video and audio tracks, if applicable, are added.
      */
-    pub async fn add_stream(&mut self, stream: Arc<Stream>) {
+    pub async fn add_stream(&self, stream: Arc<Stream>) {
         println!("Adding stream");
 
-        // while self.peer_status.borrow().to_owned() == false {
-        //     println!("Delaying stream addition for peer connection.");
-        //     self.peer_status.changed().await.unwrap();
-        // }
+        //TODO: Check if stream already exists.
 
-        if let Some(rtp_track) = &stream.video {
-            println!("Adding buffered track");
-            let buffered_track = rtp_track.get_buffered_track();
+        println!("Creating track");
+        if let Some(ref rtp_track) = stream.video {
+            let buffered_track = Arc::new(BufferedTrack::new(rtp_track.clone()));
             let rtp_sender = self
                 .peer_connection
                 .add_track(buffered_track.track.clone())
                 .await
                 .expect("Failed to add track");
 
+            let i_sender = rtp_sender.clone();
             tokio::spawn(async move {
                 let mut rtcp_buf = vec![0u8; 1500];
-                while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+                while let Ok((_, _)) = i_sender.read(&mut rtcp_buf).await {}
                 Result::<()>::Ok(())
             });
 
-            self.tracks
-                .insert(rtp_track.track_def.clone(), buffered_track);
+            // Add tracked stream
+            let t = TrackedStream {
+                buffer: buffered_track.clone(),
+                sender: rtp_sender.clone(),
+                stream: stream.clone(),
+            };
+
+            let mut s = self.streams.write().await;
+            s.insert(stream.def.clone(), t);
         }
+
+        // if let Some(rtp_track) = &stream.video {
+        //     println!("Adding buffered track");
+        //     let mut tracks = self.tracks.write().await;
+        //     tracks.insert(rtp_track.track_def.clone(), buffered_track);
+        // }
     }
 
     /**
      * Links the track with the passed index to the passed RTP stream.
      * Switches with fast-forwarding, allowing seamless switches.
      */
-    pub fn remove_stream(&mut self, stream: Stream) {
+    pub fn remove_stream(&mut self, stream: StreamDef) {
         todo!("Implement");
     }
 

@@ -48,3 +48,14 @@ O: client connection: Triggered when the webrtc connection is opened.
 ### Stream API
 I: Add Stream: Adds a new RTP stream
 I: Delete Stream: Deletes an RTP stream. May trigger RENEGOTIATION.
+
+
+# Testing Commands
+Low-framerate video with frequent GOPs.\
+`./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=1 -vcodec libx264 -b:v 2M -g 3 -tune zerolatency -pkt_size 1200 -f rtp rtp://239.7.69.7:5002`
+
+GOP burst at start of encoding stream. Makes it so the fast-forward buffer is immediately populated, allowing semi-instant connections to get instant video. Note: Requires CHANGEME to be started BEFORE ffmpeg\
+`./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=1 -vcodec libx264 -force_key_frames "expr:gte(3,n)" -b:v 2M -g 100 -tune zerolatency -pkt_size 1200 -f rtp rtp://239.7.69.7:5002`
+
+High framerate version of the previous command\
+`./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=30 -vcodec libx264 -force_key_frames "expr:gte(3,n)" -b:v 2M -g 100 -tune zerolatency -pkt_size 1200 -f rtp rtp://239.7.69.7:5002`

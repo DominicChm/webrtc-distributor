@@ -1,28 +1,17 @@
-use lazy_static::lazy_static;
-use regex::Regex;
+use std::collections::HashMap;
 use std::collections::HashSet;
-use std::hash::Hash;
 use std::sync::Arc;
-use std::{
-    collections::{BTreeMap, HashMap},
-    io::Error,
-    net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-    string::ParseError,
-};
-use webrtc::rtcp::packet;
 
-use crate::{
-    net_util::{join_multicast, listen_udp},
-    rtp_track::RtpTrack,
-};
-use crate::{rtp_track, StreamDef, TrackDef};
+use crate::rtp_track::RtpTrack;
+use crate::StreamDef;
 
 pub struct Stream {
-    pub video: Option<RtpTrack>,
-    pub audio: Option<RtpTrack>,
+    pub video: Option<Arc<RtpTrack>>,
+    pub audio: Option<Arc<RtpTrack>>,
+    pub def: StreamDef,
 }
 pub struct StreamManager {
-    streams: HashMap<StreamDef, Arc<Stream>>,
+    streams: HashMap<String, Arc<Stream>>,
 }
 
 impl StreamManager {
@@ -33,7 +22,13 @@ impl StreamManager {
     }
 
     pub fn sync_tracks(&mut self, stream_defs: Vec<StreamDef>) {
-        let current_streams: HashSet<StreamDef> = self.streams.keys().cloned().collect();
+        let current_streams: HashSet<StreamDef> = self
+            .streams
+            .values()
+            .cloned()
+            .map(|s| s.def.clone())
+            .collect();
+
         let incoming_streams: HashSet<StreamDef> = HashSet::from_iter(stream_defs.iter().cloned());
 
         let created_streams = incoming_streams.difference(&current_streams);
@@ -49,19 +44,32 @@ impl StreamManager {
         for stream in deleted_streams {}
     }
 
-    pub fn create_stream(&mut self, stream: StreamDef) -> Arc<Stream> {
-        let video = stream.video.as_ref().map(|t| RtpTrack::new(&t, &stream));
-        let audio = stream.audio.as_ref().map(|t| RtpTrack::new(&t, &stream));
+    pub fn create_stream(&mut self, def: StreamDef) -> Arc<Stream> {
+        let id = def.id.to_string();
+        if self.streams.contains_key(&id) {
+            panic!("Already contains stream");
+        }
 
-        let s = Arc::new(Stream { video, audio });
-        self.streams.insert(stream, s.clone());
+        let video = def.video.as_ref().map(|t| Arc::new(RtpTrack::new(&t, &def)));
+        let audio = def.audio.as_ref().map(|t| Arc::new(RtpTrack::new(&t, &def)));
+
+        let s = Arc::new(Stream {
+            video,
+            audio,
+            def: def.clone(),
+        });
+
+        self.streams.insert(def.id.clone(), s.clone());
+
         s
     }
 
-    pub fn delete_stream(&self, def: StreamDef) {}
-}
-// Ipv4Addr::new(224,2,127,254)
-// 9875
-pub fn sap_to_sdp(buf: &[u8]) -> String {
-    String::from_utf8(buf[24..].to_vec()).expect("sdp to string")
+    pub fn delete_stream(&mut self, id: String) {
+        self.streams.remove(&id);
+        todo!("Finish stream deletion");
+    }
+
+    pub fn get_stream(&self, stream_id: String) -> Option<Arc<Stream>> {
+        self.streams.get(&stream_id).clone().map(|f| f.clone())
+    }
 }

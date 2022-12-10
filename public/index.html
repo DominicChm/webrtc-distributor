@@ -54,14 +54,21 @@
         pc.addTransceiver('video', { 'direction': 'recvonly' })
         pc.createOffer().then(d => pc.setLocalDescription(d)).catch(log)
 
-        window.startSession = () => {
-            let sd = document.getElementById('remoteSessionDescription').value
+        window.startSession = async () => {
+            console.log("GOING");
+
+            let res = await fetch("/signal", {
+                method: "POST",
+                body: JSON.stringify(pc.localDescription)
+            });
+            let sd = await res.json();
+            console.log(sd);
             if (sd === '') {
                 return alert('Session Description must not be empty')
             }
 
             try {
-                pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(sd)))
+                pc.setRemoteDescription(new RTCSessionDescription(sd))
             } catch (e) {
                 alert(e)
             }
