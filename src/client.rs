@@ -38,7 +38,8 @@ struct TrackedStream {
 pub struct Client {
     streams: Arc<RwLock<HashMap<StreamDef, TrackedStream>>>,
     peer_connection: Arc<RTCPeerConnection>,
-    peer_status: watch::Receiver<RTCIceConnectionState>,
+    watch_peer_status: watch::Receiver<RTCIceConnectionState>,
+    watch_failed: watch::Receiver<bool>,
     offer_response: RwLock<Option<RTCSessionDescription>>,
 }
 
@@ -70,7 +71,7 @@ impl Client {
         // Create this client's peer connection
         let peer_connection = Arc::new(api.new_peer_connection(config).await.unwrap());
 
-        let (watch_tx, peer_status) = watch::channel(RTCIceConnectionState::Unspecified);
+        let (watch_tx, watch_peer_status) = watch::channel(RTCIceConnectionState::Unspecified);
 
         // Register handlers
         peer_connection.on_ice_connection_state_change(Box::new(
@@ -89,24 +90,27 @@ impl Client {
         //         Box::pin(async {})
         //     },
         // ));
+        let (watch_failed_tx, watch_failed) = watch::channel(false);
 
         let c = Client {
             streams: Arc::new(RwLock::new(HashMap::new())),
             peer_connection,
-            peer_status,
+            watch_peer_status,
+            watch_failed,
             offer_response: RwLock::new(None),
         };
 
-        c.task_track_controller();
+        c.task_track_controller(watch_failed_tx);
 
         c
     }
 
     // Task for asynchronously controller internal track buffers
     // based on connection state
-    pub fn task_track_controller(&self) {
-        let mut ps = self.peer_status.clone();
+    pub fn task_track_controller(&self, watch_failed: watch::Sender<bool>) {
+        let mut ps = self.watch_peer_status.clone();
         let streams = self.streams.clone();
+
         tokio::spawn(async move {
             loop {
                 ps.changed().await.unwrap();
@@ -130,8 +134,7 @@ impl Client {
                     }
                     RTCIceConnectionState::Failed => {
                         println!(" - cleaning up.");
-                        
-
+                        watch_failed.send(true);
                         break;
                     }
                     s => println!(""),
@@ -141,7 +144,7 @@ impl Client {
     }
     // TODO: Error handling
     pub async fn signal(&self, offer: RTCSessionDescription) -> RTCSessionDescription {
-        println!("Signalling");
+        //println!("Signalling");
 
         // Set the remote SessionDescription
         self.peer_connection
@@ -231,6 +234,10 @@ impl Client {
      */
     pub fn discard(self) {
         todo!("Implement");
+    }
+
+    pub fn watch_fail(&self) -> watch::Receiver<bool> {
+        self.watch_failed.clone()
     }
 }
 

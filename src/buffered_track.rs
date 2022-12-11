@@ -56,10 +56,6 @@ impl BufferedTrack {
             let (tx, mut rx) = mpsc::unbounded_channel::<Arc<Packet>>();
 
             // Populate the initial send queue before starting on the tx loop
-
-            // FIXME: WILL PANIC IN CERTAIN CIRCUMSTANCES
-            // Adjust timestamps of each fast-forwarded packet to match the last packet, so they all arrive
-            // together.
             for pkt in ff_buf.iter() {
                 tx.send(pkt.clone()).unwrap();
             }
@@ -69,19 +65,18 @@ impl BufferedTrack {
             // Reference: https://github.com/meetecho/janus-gateway/blob/master/src/postprocessing/pp-h264.c
             // https://webrtchacks.com/what-i-learned-about-h-264-for-webrtc-video-tim-panton/
             // https://github.com/steely-glint/srtplight
-            println!("STARTING BUFFERED WRITER!");
             loop {
-                let recv_future = subscription.recv();
-                let kill_future = kill.notified();
-
-                tokio::pin!(recv_future);
-                tokio::pin!(kill_future);
+                tokio::pin! {
+                    let recv_future = subscription.recv();
+                    let kill_future = kill.notified();
+                }
 
                 select! {
                     biased;
 
-                    v = &mut kill_future => {
-                        println!("KILLED, {:?}", v);
+                    _ = &mut kill_future => {
+                        drop(kill_future);
+                        drop(recv_future);
                         break;
                     },
 
@@ -89,8 +84,8 @@ impl BufferedTrack {
                     // be pushed through RTP before any new packets are pushed
                     // because this select is biased. Otherwise problems will happen
                     Some(pkt) = rx.recv()  => {
-                        //println!("buf wrt");
                         track.write_rtp(&pkt).await.unwrap();
+                        println!("buf wrt")
                     },
 
                     // Once all buffered packets have sent, simply listen on the
@@ -99,9 +94,7 @@ impl BufferedTrack {
                     r = &mut recv_future => {
                         match r {
                             Ok(pkt) => {
-                                //println!("BROADCASTED SEND");
                                 track.write_rtp(&pkt).await.unwrap();
-
                             }
                             Err(e) => {
                                 println!("Broadcast RX error {}", e);
@@ -111,7 +104,7 @@ impl BufferedTrack {
 
                 }
             }
-            println!("FELL OUT OF BUFFERED LOOP");
+            println!("Buffered writer is dead.");
         });
     }
 

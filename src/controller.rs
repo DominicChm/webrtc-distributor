@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{borrow::Borrow, collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
 use tokio::{
@@ -17,7 +17,7 @@ pub struct AppController {
     // trigger this listener. Their reneg is intended to be handled in a sync fashion
     stream_manager: StreamManager,
 
-    clients: RwLock<HashMap<String, Arc<Client>>>,
+    clients: Arc<RwLock<HashMap<String, Arc<Client>>>>,
 
     client_renegotiation_notifier: broadcast::Sender<String>,
     client_state_notifier: broadcast::Sender<(String, RTCPeerConnectionState)>,
@@ -33,7 +33,7 @@ impl AppController {
 
             client_renegotiation_notifier,
             client_state_notifier,
-            clients: RwLock::new(HashMap::new()),
+            clients: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -53,6 +53,17 @@ impl AppController {
         let c = Arc::new(Client::new().await);
 
         m.insert(client_id.clone(), c.clone());
+
+        let c_inner = c.clone();
+        let id_inner = client_id.clone();
+        let clients = self.clients.clone();
+        tokio::spawn(async move {
+            c_inner.watch_fail().changed().await.unwrap();
+            println!("Client failed - cleaning it up.");
+
+            let mut m = clients.write().await;
+            m.remove(&id_inner);
+        });
 
         drop(m);
 

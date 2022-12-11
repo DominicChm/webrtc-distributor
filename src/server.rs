@@ -73,7 +73,7 @@ fn signal(request: &Request, a: Arc<AppController>, rt: Handle, uid: String) -> 
     // Use block_on to allow this sync request to call an async handler.
     let a_i = a.clone();
     let res = rt.block_on(async move { a_i.signal(uid, offer).await });
-    println!(" Signalling done!");
+    //println!(" Signalling done!");
 
     Response::text(serde_json::to_string(&res).unwrap())
 }
