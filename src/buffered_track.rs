@@ -51,23 +51,17 @@ impl BufferedTrack {
         ff_buf: Vec<Arc<Packet>>,
         mut subscription: broadcast::Receiver<Arc<Packet>>,
     ) {
+        println!("Trying to start pusher task");
         tokio::spawn(async move {
-            let (tx, mut rx) = mpsc::unbounded_channel::<Packet>();
+            let (tx, mut rx) = mpsc::unbounded_channel::<Arc<Packet>>();
 
             // Populate the initial send queue before starting on the tx loop
 
             // FIXME: WILL PANIC IN CERTAIN CIRCUMSTANCES
             // Adjust timestamps of each fast-forwarded packet to match the last packet, so they all arrive
             // together.
-            if let Some(last_pack) = ff_buf.last() {
-                let ts = last_pack.header.timestamp;
-                for (i, pkt) in ff_buf.iter().enumerate() {
-                    let mut p = pkt.as_ref().clone();
-                    //println!("{:?}", pkt.payload.to_vec().get(0).unwrap());
-                    //p.header.timestamp = ts;
-                    //p.header.sequence_number = (i + 5) as u16;
-                    tx.send(p).unwrap();
-                }
+            for pkt in ff_buf.iter() {
+                tx.send(pkt.clone()).unwrap();
             }
 
             //let recv_future = subscription.recv();
@@ -75,7 +69,7 @@ impl BufferedTrack {
             // Reference: https://github.com/meetecho/janus-gateway/blob/master/src/postprocessing/pp-h264.c
             // https://webrtchacks.com/what-i-learned-about-h-264-for-webrtc-video-tim-panton/
             // https://github.com/steely-glint/srtplight
-            println!("Going into buffered loop!");
+            println!("STARTING BUFFERED WRITER!");
             loop {
                 let recv_future = subscription.recv();
                 let kill_future = kill.notified();
@@ -95,8 +89,7 @@ impl BufferedTrack {
                     // be pushed through RTP before any new packets are pushed
                     // because this select is biased. Otherwise problems will happen
                     Some(pkt) = rx.recv()  => {
-                        //println!("BUFFERED SEND");
-                        //tokio::time::sleep(Duration::from_millis(10)).await;
+                        //println!("buf wrt");
                         track.write_rtp(&pkt).await.unwrap();
                     },
 
@@ -122,11 +115,16 @@ impl BufferedTrack {
         });
     }
 
+    pub async fn restart(&self) {
+        self.pause().await;
+        self.resume().await;
+    }
+
     pub async fn pause(&self) {
         self.kill.notify_waiters();
 
         let mut b = self.pusher_spawned.write().await;
-        *b = true;
+        *b = false;
     }
 
     pub async fn resume(&self) {

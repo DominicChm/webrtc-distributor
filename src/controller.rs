@@ -80,7 +80,7 @@ impl AppController {
 
         let s = self.stream_manager.get_stream(stream_id).unwrap();
 
-        c.add_stream(s);
+        c.add_stream(s).await;
     }
 
     pub async fn client_remove_stream(&self, client_id: String, stream_id: String) {

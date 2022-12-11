@@ -38,7 +38,7 @@ struct TrackedStream {
 pub struct Client {
     streams: Arc<RwLock<HashMap<StreamDef, TrackedStream>>>,
     peer_connection: Arc<RTCPeerConnection>,
-    peer_status: watch::Receiver<RTCPeerConnectionState>,
+    peer_status: watch::Receiver<RTCIceConnectionState>,
     offer_response: RwLock<Option<RTCSessionDescription>>,
 }
 
@@ -70,27 +70,25 @@ impl Client {
         // Create this client's peer connection
         let peer_connection = Arc::new(api.new_peer_connection(config).await.unwrap());
 
+        let (watch_tx, peer_status) = watch::channel(RTCIceConnectionState::Unspecified);
+
         // Register handlers
         peer_connection.on_ice_connection_state_change(Box::new(
             move |connection_state: RTCIceConnectionState| {
-                println!("Connection State has changed {}", connection_state);
-                if connection_state == RTCIceConnectionState::Failed {
-                    println!("Connection to peer failed!");
-                }
+                watch_tx.send(connection_state).unwrap();
                 Box::pin(async {})
             },
         ));
 
         // Set the handler for Peer connection state
         // This will notify you when the peer has connected/disconnected
-        let (watch_tx, peer_status) = tokio::sync::watch::channel(RTCPeerConnectionState::Closed);
 
-        peer_connection.on_peer_connection_state_change(Box::new(
-            move |s: RTCPeerConnectionState| {
-                watch_tx.send(s).unwrap();
-                Box::pin(async {})
-            },
-        ));
+        // peer_connection.on_peer_connection_state_change(Box::new(
+        //     move |s: RTCPeerConnectionState| {
+        //         println!("Peer connection state: {}", s);
+        //         Box::pin(async {})
+        //     },
+        // ));
 
         let c = Client {
             streams: Arc::new(RwLock::new(HashMap::new())),
@@ -113,25 +111,30 @@ impl Client {
             loop {
                 ps.changed().await.unwrap();
                 let state = ps.borrow().clone();
+                print!("CONNECTION STATE CHANGE: {:?}", state);
                 match state {
-                    RTCPeerConnectionState::Connected => {
+                    RTCIceConnectionState::Connected => {
                         let streams_lock = streams.read().await;
-                        println!("CONNECTION - resuming {} streams", streams_lock.len());
+                        println!(" - resuming {} streams", streams_lock.len());
                         for s in streams_lock.values() {
                             s.buffer.resume().await;
                         }
                     }
-                    RTCPeerConnectionState::New => {
-                        println!("NEW CONNECTION");
+                    RTCIceConnectionState::Disconnected => {
+                        let streams_lock = streams.read().await;
+                        println!(" - pausing {} streams", streams_lock.len());
+
+                        for s in streams_lock.values() {
+                            s.buffer.pause().await;
+                        }
                     }
-                    RTCPeerConnectionState::Disconnected => {
-                        println!("DISCONNECTION");
-                    }
-                    RTCPeerConnectionState::Failed => {
-                        // Clean up
+                    RTCIceConnectionState::Failed => {
+                        println!(" - cleaning up.");
+                        
+
                         break;
                     }
-                    s => println!("CONNECTION STATE CHANGE: {:?}", s),
+                    s => println!(""),
                 }
             }
         });
@@ -146,15 +149,15 @@ impl Client {
             .await
             .expect("SIGNAL ERROR: set_remote_description");
 
+        // Create channel that is blocked until ICE Gathering is complete
+        let mut gather_complete = self.peer_connection.gathering_complete_promise().await;
+
         // Create an answer
         let answer = self
             .peer_connection
             .create_answer(None)
             .await
             .expect("SIGNAL ERROR: create_answer");
-
-        // Create channel that is blocked until ICE Gathering is complete
-        let mut gather_complete = self.peer_connection.gathering_complete_promise().await;
 
         // Sets the LocalDescription, and starts our UDP listeners
         self.peer_connection
@@ -184,8 +187,9 @@ impl Client {
 
         //TODO: Check if stream already exists.
 
-        println!("Creating track");
         if let Some(ref rtp_track) = stream.video {
+            println!("Creating video track");
+
             let buffered_track = Arc::new(BufferedTrack::new(rtp_track.clone()));
             let rtp_sender = self
                 .peer_connection
@@ -197,6 +201,7 @@ impl Client {
             tokio::spawn(async move {
                 let mut rtcp_buf = vec![0u8; 1500];
                 while let Ok((_, _)) = i_sender.read(&mut rtcp_buf).await {}
+                println!("RTCP RXer FAILED");
                 Result::<()>::Ok(())
             });
 
@@ -210,12 +215,6 @@ impl Client {
             let mut s = self.streams.write().await;
             s.insert(stream.def.clone(), t);
         }
-
-        // if let Some(rtp_track) = &stream.video {
-        //     println!("Adding buffered track");
-        //     let mut tracks = self.tracks.write().await;
-        //     tracks.insert(rtp_track.track_def.clone(), buffered_track);
-        // }
     }
 
     /**

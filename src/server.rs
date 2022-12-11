@@ -32,15 +32,15 @@ pub enum RPCResponse {
 
 pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        rouille::start_server("localhost:80", move |request| {
+        rouille::start_server("0.0.0.0:80", move |request| {
             router!(request,
                 // first route
                 (GET) (/) => {
                     serve_index(&request)
                 },
 
-                (POST) (/signal) => {
-                    signal(&request, c.clone(), rt.clone())
+                (POST) (/signal/{uid: String}) => {
+                    signal(&request, c.clone(), rt.clone(), uid)
                 },
 
                 // default route
@@ -61,24 +61,19 @@ fn serve_index(request: &Request) -> Response {
     }
 }
 
-fn signal(request: &Request, a: Arc<AppController>, rt: Handle) -> Response {
-    println!("Got signalling request");
+fn signal(request: &Request, a: Arc<AppController>, rt: Handle, uid: String) -> Response {
+    println!("Got signalling request. UID: {}", uid);
 
-    session::session(request, "SID", 3600, |session| {
-        let id: String = session.id().to_string();
-        let mut buf = String::new();
-        request.data().unwrap().read_to_string(&mut buf).unwrap();
+    let mut buf = String::new();
+    request.data().unwrap().read_to_string(&mut buf).unwrap();
 
-        let offer: RTCSessionDescription = serde_json::from_str(&buf).unwrap();
+    let offer: RTCSessionDescription = serde_json::from_str(&buf).unwrap();
 
-        
-            // Call the asynchronous connect method using the runtime.
-        let a_i = a.clone();
-        let res = rt.block_on(async move { 
-            a_i.signal(id, offer).await 
-        });
-        println!(" Signalling done!");
+    // Call the asynchronous connect method using the main runtime handle.
+    // Use block_on to allow this sync request to call an async handler.
+    let a_i = a.clone();
+    let res = rt.block_on(async move { a_i.signal(uid, offer).await });
+    println!(" Signalling done!");
 
-        Response::text(serde_json::to_string(&res).unwrap())
-    })
+    Response::text(serde_json::to_string(&res).unwrap())
 }

@@ -1,13 +1,9 @@
-use crate::buffered_track::BufferedTrack;
 use crate::net_util::listen_udp;
 use crate::{StreamDef, TrackDef};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::broadcast::{self, Receiver, Sender};
 use tokio::sync::RwLock;
-use webrtc::api::media_engine::{MIME_TYPE_H264, MIME_TYPE_VP8};
-use webrtc::rtcp::packet;
 use webrtc::rtp::packet::Packet;
 use webrtc::util::Unmarshal;
 
@@ -49,6 +45,11 @@ impl RtpTrack {
         }
     }
 
+    /**
+     * RTP reader task. Continuously grabs RTP packets from the IP specified in the track definition
+     * and distributes them to BufferedTracks. Optionally, also handles buffering packets
+     * for fast-starting new clients.
+     */
     fn task_rtp_reader(
         ff_packets: Option<Arc<RwLock<Vec<Arc<Packet>>>>>,
         send: Sender<Arc<Packet>>,
@@ -57,12 +58,8 @@ impl RtpTrack {
         tokio::spawn(async move {
             let mut stream_state = StreamState::default();
 
-            // ===== INIT SOCKET =====
-            let ip = def.ip.unwrap_or(IpAddr::from(Ipv4Addr::LOCALHOST));
-            let sock_addr = SocketAddr::new(ip, def.port);
-
-            // Connect to the specified UDP track's socket.
-            let sock = listen_udp(&sock_addr).unwrap();
+            // Connect to the specified RTP track's socket.
+            let sock = listen_udp(&def.socket_addr()).unwrap();
             let sock = UdpSocket::from_std(sock).unwrap();
 
             // Begin main UDP packet consumption loop
@@ -93,7 +90,8 @@ impl RtpTrack {
                         .await;
                     }
 
-                    // Broadcast the packet
+                    // Broadcast the packet. Listeners should be BufferedTracks, which
+                    // then distribute to individual clients
                     if let Err(e) = send.send(pkt) {
                         println!("BROADCAST ERR: {}", e);
                     }
@@ -105,12 +103,16 @@ impl RtpTrack {
     }
 
     /**
-     * KF buffering logic.
-     * Chrome seems to require TWO total keyframes to being displaying video.
+     * KeyFrame buffering logic.
+     * Chrome seems to require TWO keyframes to being displaying video (from testing).
      * This buffering logic attempts to keep two keyframes in its buffer, with one
-     * at ff[0].
-     * When a new keyframe is identified, the buffer is trimmed to the previously most-recent
-     * keyframe Group Of Packets (GOP).
+     * at ff[0]. When a new keyframe is identified, the buffer is trimmed to the
+     * previously most-recent keyframe Group Of Packets (GOP).
+     *
+     * This approach has some disadvantages, but it's the lesser evil compared to
+     * manually generating I-frames or having a short GOP interval.
+     * Notably, this approach should be good for CPU-constrained environments
+     * like embedded systems. (TO BE PROVEN :/)
      */
     pub async fn handle_ff_buffering(
         ff: Arc<RwLock<Vec<Arc<Packet>>>>,
@@ -124,14 +126,14 @@ impl RtpTrack {
         // Ensures that buffering code is only run if there's at least one pkt in the ff buffer.
         if let Some(last_pkt) = ff.last() {
             let is_new_gop = last_pkt.header.timestamp != pkt.header.timestamp;
-            state.found_kf |= is_keyframe(&pkt.clone(), def);
+            state.found_kf |= def.is_keyframe(&pkt);
 
             if is_new_gop {
                 // If previous GOP was a KF, handle a buffer trim
                 if state.found_kf {
                     // Keep the index of the last KF gop for trimming
                     let trimmed_start = state.idx_last_kframe_gop;
-                    
+
                     // Update indices for the incoming KF GOP
                     state.idx_last_kframe_gop = state.idx_last_gop;
                     state.found_kf = false;
@@ -140,15 +142,15 @@ impl RtpTrack {
                     // TODO: UPDATE VEC TO BE A VECDEQUE
                     // https://users.rust-lang.org/t/best-way-to-drop-range-of-elements-from-front-of-vecdeque/31795
                     drop(ff.drain(..trimmed_start));
-                    //println!("New KF! New start: {}", trimmed_start);
+
                     state.idx_last_gop -= trimmed_start;
                     state.idx_last_kframe_gop -= trimmed_start;
                     state.num_packets_buffered -= trimmed_start;
                 }
-
+                // Update index of the last GOP.
+                // At this point, newest packet hasn't been added
+                // so len is eq. to it's index
                 state.idx_last_gop = ff.len();
-
-                //println!("NUM PACKETS IN BUFFER: {}", state.num_packets_buffered);
             }
         }
 
@@ -165,85 +167,3 @@ impl RtpTrack {
         self.subscriber.resubscribe()
     }
 }
-
-// https://stackoverflow.com/questions/1957427/detect-mpeg4-h264-i-frame-idr-in-rtp-stream
-fn is_keyframe(pkt: &Packet, def: &TrackDef) -> bool {
-    let mime = def.mime_type().unwrap();
-    match mime {
-        MIME_TYPE_VP8 => {
-            // https://datatracker.ietf.org/doc/html/rfc7741#section-4.3
-            // https://github.com/FFmpeg/FFmpeg/blob/master/libavformat/rtpdec_vp8.c
-
-            // Note: bit 0 is MSB
-            let mut b = &pkt.payload[..];
-
-            let x = b[0] & 0x80 != 0;
-            let s = b[0] & 0x10 != 0;
-            let pid = b[0] & 0x0f;
-
-            if x {
-                b = &b[1..];
-            }
-
-            let i = x && b[0] & 0x80 != 0;
-            let l = x && b[0] & 0x40 != 0;
-            let t = x && b[0] & 0x20 != 0;
-            let k = x && b[0] & 0x10 != 0;
-
-            b = &b[1..];
-
-            // Handle I
-            if i && b[0] & 0x80 != 0 {
-                b = &b[2..];
-            } else if i {
-                b = &b[1..];
-            }
-
-            // Handle L
-            if l {
-                b = &b[1..];
-            }
-
-            // Handle T/K
-            if t || k {
-                b = &b[1..];
-            }
-
-            b[0] & 0x01 == 0 && s && pid == 0
-        }
-        MIME_TYPE_H264 => {
-            // https://stackoverflow.com/questions/1957427/detect-mpeg4-h264-i-frame-idr-in-rtp-stream
-            let p = &pkt.payload;
-            let fragment_type = p.get(0).unwrap() & 0x1F;
-            let nal_type = p.get(1).unwrap() & 0x1F;
-            let start_bit = p.get(1).unwrap() & 0x80;
-
-            ((fragment_type == 28 || fragment_type == 29) && nal_type == 5 && start_bit == 128)
-                || fragment_type == 5
-        }
-        _ => false,
-    }
-}
-
-// https://stackoverflow.com/questions/1957427/detect-mpeg4-h264-i-frame-idr-in-rtp-stream
-// https://stackoverflow.com/questions/38795036/detect-vp8-key-framei-frame-in-rtp-stream
-
-// https://github.com/bluejekyll/multicast-example/blob/c3ef3be23e6cf0a9c30900ef40d14b52ccf93efe/src/lib.rs#L45
-
-/*           let sdp_socket = UdpSocket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
-           let sdp_multicast_ip = Ipv4Addr::new(224, 2, 127, 254);
-
-           sdp_socket.join_multicast_v4(&sdp_multicast_ip, &Ipv4Addr::new(0, 0, 0, 0));
-           let bindaddr = SocketAddr::new(Ipv4Addr::new(0, 0, 0, 0).into(), 0);
-
-           sdp_socket.set_reuse_address(true);
-           sdp_socket.bind(&SockAddr::from(bindaddr));
-           // TODO: Start ffprobe reader task.
-
-           let mut buf = std::mem::MaybeUninit::new(vec![0u8; 1600]); // UDP MTU
-           tokio::net::UdpSocket::from(sdp_socket.std);
-           // Read packet continuously
-
-*/
-
-// ./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=1 -vcodec libx264 -b:v 200k -cpu-used 5 -g 3 -f sap -packet_size 1000 sap://239.7.69.7:5002

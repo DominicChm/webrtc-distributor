@@ -9,7 +9,7 @@
     <textarea id="localSessionDescription" readonly="true"></textarea> <br />
 
     Golang base64 Session Description<br />
-    <textarea id="remoteSessionDescription"> </textarea> <br />
+    <pre id="remoteSessionDescription"> </pre> <br />
     <button onclick="window.startSession()"> Start Session </button><br />
 
     <br />
@@ -21,8 +21,16 @@
     <div id="div"></div>
 
     <script>
-        /* eslint-env browser */
+        function uuidv4() {
+            return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c =>
+                (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+            );
+        }
 
+
+        /* eslint-env browser */
+        let uid = uuidv4();
+        console.log(`UID: ${uid}`)
         let pc = new RTCPeerConnection({
             iceServers: [
                 {
@@ -57,7 +65,7 @@
         window.startSession = async () => {
             console.log("GOING");
 
-            let res = await fetch("/signal", {
+            let res = await fetch(`/signal/${uid}`, {
                 method: "POST",
                 body: JSON.stringify(pc.localDescription)
             });
@@ -66,6 +74,7 @@
             if (sd === '') {
                 return alert('Session Description must not be empty')
             }
+            document.getElementById('remoteSessionDescription').innerText = JSON.stringify(sd)
 
             try {
                 pc.setRemoteDescription(new RTCSessionDescription(sd))
