@@ -38,7 +38,7 @@ struct TrackedStream {
 pub struct Client {
     streams: Arc<RwLock<HashMap<StreamDef, TrackedStream>>>,
     peer_connection: Arc<RTCPeerConnection>,
-    watch_peer_status: watch::Receiver<RTCIceConnectionState>,
+    watch_peer_status: watch::Receiver<RTCPeerConnectionState>,
     watch_failed: watch::Receiver<bool>,
     offer_response: RwLock<Option<RTCSessionDescription>>,
 }
@@ -71,25 +71,26 @@ impl Client {
         // Create this client's peer connection
         let peer_connection = Arc::new(api.new_peer_connection(config).await.unwrap());
 
-        let (watch_tx, watch_peer_status) = watch::channel(RTCIceConnectionState::Unspecified);
+        let (watch_tx, watch_peer_status) = watch::channel(RTCPeerConnectionState::Unspecified);
 
         // Register handlers
-        peer_connection.on_ice_connection_state_change(Box::new(
-            move |connection_state: RTCIceConnectionState| {
-                watch_tx.send(connection_state).unwrap();
-                Box::pin(async {})
-            },
-        ));
+        // peer_connection.on_ice_connection_state_change(Box::new(
+        //     move |connection_state: RTCIceConnectionState| {
+        //         watch_tx.send(connection_state).unwrap();
+        //         Box::pin(async {})
+        //     },
+        // ));
 
         // Set the handler for Peer connection state
         // This will notify you when the peer has connected/disconnected
 
-        // peer_connection.on_peer_connection_state_change(Box::new(
-        //     move |s: RTCPeerConnectionState| {
-        //         println!("Peer connection state: {}", s);
-        //         Box::pin(async {})
-        //     },
-        // ));
+        peer_connection.on_peer_connection_state_change(Box::new(
+            move |s: RTCPeerConnectionState| {
+                println!("Peer connection state: {}", s);
+                watch_tx.send(s);
+                Box::pin(async {})
+            },
+        ));
         let (watch_failed_tx, watch_failed) = watch::channel(false);
 
         let c = Client {
@@ -117,27 +118,19 @@ impl Client {
                 let state = ps.borrow().clone();
                 print!("CONNECTION STATE CHANGE: {:?}", state);
                 match state {
-                    RTCIceConnectionState::Connected => {
+                    RTCPeerConnectionState::Connected => {
                         let streams_lock = streams.read().await;
                         println!(" - resuming {} streams", streams_lock.len());
                         for s in streams_lock.values() {
                             s.buffer.resume().await;
                         }
                     }
-                    RTCIceConnectionState::Disconnected => {
-                        let streams_lock = streams.read().await;
-                        println!(" - pausing {} streams", streams_lock.len());
-
-                        for s in streams_lock.values() {
-                            s.buffer.pause().await;
-                        }
-                    }
-                    RTCIceConnectionState::Failed => {
+                    RTCPeerConnectionState::Disconnected => {
                         println!(" - cleaning up.");
-                        watch_failed.send(true);
+                        watch_failed.send(true).ok();
                         break;
                     }
-                    s => println!(""),
+                    s => println!("{}", s),
                 }
             }
         });

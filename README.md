@@ -59,3 +59,7 @@ GOP burst at start of encoding stream. Makes it so the fast-forward buffer is im
 
 High framerate version of the previous command\
 `./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=30 -vcodec libx264 -force_key_frames "expr:gte(3,n)" -b:v 2M -g 100 -tune zerolatency -pkt_size 1200 -f rtp rtp://239.7.69.7:5002`
+
+
+## TODO ideas
+- Datachannel to notify when buffering complete, so flash of fast-start/fast-forward isn't seen

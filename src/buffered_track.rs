@@ -85,7 +85,6 @@ impl BufferedTrack {
                     // because this select is biased. Otherwise problems will happen
                     Some(pkt) = rx.recv()  => {
                         track.write_rtp(&pkt).await.unwrap();
-                        println!("buf wrt")
                     },
 
                     // Once all buffered packets have sent, simply listen on the
@@ -97,14 +96,14 @@ impl BufferedTrack {
                                 track.write_rtp(&pkt).await.unwrap();
                             }
                             Err(e) => {
-                                println!("Broadcast RX error {}", e);
+                                eprintln!("Broadcast RX error {}", e);
                             }
                         }
                     }
 
                 }
             }
-            println!("Buffered writer is dead.");
+            eprintln!("Buffered writer is dead.");
         });
     }
 
@@ -122,7 +121,7 @@ impl BufferedTrack {
 
     pub async fn resume(&self) {
         if self.pusher_spawned.read().await.clone() {
-            println!("Pusher already spawned!");
+            eprintln!("Pusher already spawned!");
             return;
         }
 
