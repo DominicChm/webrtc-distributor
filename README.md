@@ -63,3 +63,4 @@ High framerate version of the previous command\
 
 ## TODO ideas
 - Datachannel to notify when buffering complete, so flash of fast-start/fast-forward isn't seen
+- stdout/stdin API (JSON/CSV/etc)

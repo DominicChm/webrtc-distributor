@@ -1,16 +1,12 @@
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::select;
 
-use tokio::sync::{broadcast, mpsc, oneshot, Notify, RwLock};
-use tokio::task::JoinHandle;
+use tokio::sync::{broadcast, mpsc, Notify, RwLock};
 use webrtc::rtp::packet::Packet;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
 use webrtc::track::track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocalWriter};
 
 use crate::rtp_track::RtpTrack;
-use crate::{StreamDef, TrackDef};
 pub struct BufferedTrack {
     pub track: Arc<TrackLocalStaticRTP>,
     pub rtp_track: Arc<RtpTrack>,
@@ -107,18 +103,6 @@ impl BufferedTrack {
         });
     }
 
-    pub async fn restart(&self) {
-        self.pause().await;
-        self.resume().await;
-    }
-
-    pub async fn pause(&self) {
-        self.kill.notify_waiters();
-
-        let mut b = self.pusher_spawned.write().await;
-        *b = false;
-    }
-
     pub async fn resume(&self) {
         if self.pusher_spawned.read().await.clone() {
             eprintln!("Pusher already spawned!");
@@ -132,13 +116,5 @@ impl BufferedTrack {
 
         let mut b = self.pusher_spawned.write().await;
         *b = true;
-    }
-
-    pub async fn is_paused(&self) -> bool {
-        !self.pusher_spawned.read().await.clone()
-    }
-
-    pub async fn discard(self) {
-        self.pause().await;
     }
 }

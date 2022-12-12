@@ -101,4 +101,8 @@ impl AppController {
     fn add_stream(def: StreamDef) {}
 
     fn delete_stream(id: String) {}
+
+    pub fn streams(&self) -> Vec<StreamDef> {
+        self.stream_manager.stream_defs()
+    }
 }

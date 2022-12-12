@@ -50,8 +50,14 @@ impl StreamManager {
             panic!("Already contains stream");
         }
 
-        let video = def.video.as_ref().map(|t| Arc::new(RtpTrack::new(&t, &def)));
-        let audio = def.audio.as_ref().map(|t| Arc::new(RtpTrack::new(&t, &def)));
+        let video = def
+            .video
+            .as_ref()
+            .map(|t| Arc::new(RtpTrack::new(&t, &def)));
+        let audio = def
+            .audio
+            .as_ref()
+            .map(|t| Arc::new(RtpTrack::new(&t, &def)));
 
         let s = Arc::new(Stream {
             video,
@@ -71,5 +77,9 @@ impl StreamManager {
 
     pub fn get_stream(&self, stream_id: String) -> Option<Arc<Stream>> {
         self.streams.get(&stream_id).clone().map(|f| f.clone())
+    }
+
+    pub fn stream_defs(&self) -> Vec<StreamDef> {
+        self.streams.values().map(|f| f.def.clone()).collect()
     }
 }

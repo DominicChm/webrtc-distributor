@@ -9,12 +9,10 @@ use std::{
     sync::Arc,
 };
 
-use client::Client;
 use stream_manager::StreamManager;
 use structopt::StructOpt;
 use webrtc::{
     api::media_engine::{MIME_TYPE_H264, MIME_TYPE_VP8},
-    peer_connection::sdp::session_description::RTCSessionDescription,
     rtp::packet::Packet,
 };
 mod client;
