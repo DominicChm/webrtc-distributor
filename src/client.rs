@@ -204,7 +204,7 @@ impl Client {
      * Links the track with the passed index to the passed RTP stream.
      * Switches with fast-forwarding, allowing seamless switches.
      */
-    pub fn remove_stream(&mut self, stream: StreamDef) {
+    pub fn remove_stream(&mut self, _stream: StreamDef) {
         todo!("Implement");
     }
 

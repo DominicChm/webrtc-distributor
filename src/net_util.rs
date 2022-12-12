@@ -20,10 +20,10 @@ pub fn listen_udp(addr: &SocketAddr) -> Result<std::net::UdpSocket, io::Error> {
 pub fn bind_udp(addr: &SocketAddr) -> Result<std::net::UdpSocket, io::Error> {
     let socket =
         match addr.ip() {
-            IpAddr::V4(ref mdns_v4) => Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
+            IpAddr::V4(ref _mdns_v4) => Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
                 .expect("ipv4 dgram socket"),
 
-            IpAddr::V6(ref mdns_v6) => Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))
+            IpAddr::V6(ref _mdns_v6) => Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))
                 .expect("ipv6 dgram socket"),
         };
 

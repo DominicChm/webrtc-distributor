@@ -41,7 +41,7 @@ impl StreamManager {
         let deleted_streams = current_streams.difference(&incoming_streams);
 
         // Delete old ones
-        for stream in deleted_streams {}
+        for _stream in deleted_streams {}
     }
 
     pub fn create_stream(&mut self, def: StreamDef) -> Arc<Stream> {

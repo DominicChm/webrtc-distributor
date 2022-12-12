@@ -1,24 +1,24 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_VP8};
 use webrtc::api::APIBuilder;
 use webrtc::api::API;
-use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
+
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
-use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::sdp::SessionDescription;
-use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
-use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
-use webrtc::Error;
 
-use crate::rtp_track::RtpTrack;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+
+use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
+
+use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
+
+
+
+
 
 pub struct StreamPeer {
     api: Arc<API>,
@@ -26,7 +26,7 @@ pub struct StreamPeer {
 }
 
 impl StreamPeer {
-    pub async fn new(offer: RTCSessionDescription) -> StreamPeer {
+    pub async fn new(_offer: RTCSessionDescription) -> StreamPeer {
         let mut m = MediaEngine::default();
         m.register_default_codecs().unwrap();
     
@@ -36,7 +36,7 @@ impl StreamPeer {
 
         
 
-        let video_track = Arc::new(TrackLocalStaticRTP::new(
+        let _video_track = Arc::new(TrackLocalStaticRTP::new(
             RTCRtpCodecCapability {
                 mime_type: MIME_TYPE_VP8.to_owned(),
                 ..Default::default()

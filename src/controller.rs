@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, RwLock};
 use webrtc::peer_connection::{
     peer_connection_state::RTCPeerConnectionState, sdp::session_description::RTCSessionDescription,
 };
@@ -90,13 +90,13 @@ impl AppController {
         c.add_stream(s).await;
     }
 
-    pub async fn client_remove_stream(&self, client_id: String, stream_id: String) {
+    pub async fn client_remove_stream(&self, _client_id: String, _stream_id: String) {
         todo!()
     }
 
-    fn add_stream(def: StreamDef) {}
+    fn add_stream(_def: StreamDef) {}
 
-    fn delete_stream(id: String) {}
+    fn delete_stream(_id: String) {}
 
     pub fn streams(&self) -> Vec<StreamDef> {
         self.stream_manager.stream_defs()

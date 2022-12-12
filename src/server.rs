@@ -1,13 +1,12 @@
 use std::{
     io::Read,
     sync::{
-        mpsc::{Receiver, Sender},
         Arc,
     },
 };
 
 // Powers the internal server
-use rouille::{router, session, Request, Response};
+use rouille::{router, Request, Response};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Handle;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
@@ -50,7 +49,7 @@ pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
     })
 }
 
-fn serve_index(request: &Request) -> Response {
+fn serve_index(_request: &Request) -> Response {
     if cfg!(debug_assertions) {
         Response::from_file(
             "text/html",
