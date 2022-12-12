@@ -1,24 +1,11 @@
-/*
-    Manages peer connections
-*/
-
 use anyhow::Result;
-use bytes::buf;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-use tokio::{
-    select,
-    sync::{broadcast, watch, Mutex, RwLock},
-};
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{watch, RwLock};
 use webrtc::{
     api::{
-        interceptor_registry::register_default_interceptors,
-        media_engine::{MediaEngine, MIME_TYPE_VP8},
-        APIBuilder, API,
+        interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
     },
-    ice_transport::{ice_connection_state::RTCIceConnectionState, ice_server::RTCIceServer},
+    ice_transport::ice_server::RTCIceServer,
     interceptor::registry::Registry,
     peer_connection::{
         configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
@@ -27,7 +14,7 @@ use webrtc::{
     rtp_transceiver::rtp_sender::RTCRtpSender,
 };
 
-use crate::{buffered_track::BufferedTrack, stream_manager::Stream, StreamDef, TrackDef};
+use crate::{buffered_track::BufferedTrack, stream_manager::Stream, StreamDef};
 
 #[derive(Clone)]
 struct TrackedStream {
