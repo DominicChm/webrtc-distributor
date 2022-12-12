@@ -1,17 +1,13 @@
-use std::{
-    io::Read,
-    sync::{
-        Arc,
-    },
-};
+use std::{io::Read, sync::Arc};
 
 // Powers the internal server
 use rouille::{router, Request, Response};
 use serde::{Deserialize, Serialize};
+use sysinfo::{System, SystemExt};
 use tokio::runtime::Handle;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::controller::AppController;
+use crate::{controller::AppController, stats::SystemStatusReader};
 
 #[derive(Serialize, Deserialize)]
 pub struct ClientRPC {
@@ -38,8 +34,12 @@ pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
                     serve_index(&request)
                 },
 
-                (POST) (/signal/{uid: String}) => {
-                    signal(&request, c.clone(), rt.clone(), uid)
+                (POST) (/api/signal/{uid: String}) => {
+                    rt.block_on(async { signal(&request, &c, uid).await })
+                },
+
+                (GET) (/api/stats) => {
+                    rt.block_on(async { stats(&c).await })
                 },
 
                 // default route
@@ -60,7 +60,7 @@ fn serve_index(_request: &Request) -> Response {
     }
 }
 
-fn signal(request: &Request, a: Arc<AppController>, rt: Handle, uid: String) -> Response {
+async fn signal(request: &Request, a: &Arc<AppController>, uid: String) -> Response {
     println!("Got signalling request. UID: {}", uid);
 
     let mut buf = String::new();
@@ -68,11 +68,13 @@ fn signal(request: &Request, a: Arc<AppController>, rt: Handle, uid: String) -> 
 
     let offer: RTCSessionDescription = serde_json::from_str(&buf).unwrap();
 
-    // Call the asynchronous connect method using the main runtime handle.
-    // Use block_on to allow this sync request to call an async handler.
     let a_i = a.clone();
-    let res = rt.block_on(async move { a_i.signal(uid, offer).await });
-    //println!(" Signalling done!");
+    let res = a_i.signal(uid, offer).await;
 
-    Response::text(serde_json::to_string(&res).unwrap())
+    Response::json(&res)
+}
+
+async fn stats(a: &Arc<AppController>) -> Response {
+    let stats = a.stats().await;
+    Response::json(&stats)
 }

@@ -1,12 +1,23 @@
 use std::{collections::HashMap, sync::Arc};
 
+use serde::Serialize;
 use tokio::sync::{broadcast, RwLock};
 use webrtc::peer_connection::{
     peer_connection_state::RTCPeerConnectionState, sdp::session_description::RTCSessionDescription,
 };
 
-use crate::{client::Client, stream_manager::StreamManager, StreamDef};
+use crate::{
+    client::Client,
+    stats::{SystemStatus, SystemStatusReader},
+    stream_manager::StreamManager,
+    StreamDef,
+};
 
+#[derive(Serialize, Clone)]
+pub struct AppStats {
+    system_status: SystemStatus,
+    clients: usize,
+}
 pub struct AppController {
     // Channel that notifies when specific client IDs should begin renegotiation
     // Note: Functions that explicitly take an offer and return a response do not
@@ -14,6 +25,7 @@ pub struct AppController {
     stream_manager: StreamManager,
 
     clients: Arc<RwLock<HashMap<String, Arc<Client>>>>,
+    sys_stats: SystemStatusReader,
 
     client_renegotiation_notifier: broadcast::Sender<String>,
     client_state_notifier: broadcast::Sender<(String, RTCPeerConnectionState)>,
@@ -26,7 +38,7 @@ impl AppController {
 
         AppController {
             stream_manager,
-
+            sys_stats: SystemStatusReader::new(),
             client_renegotiation_notifier,
             client_state_notifier,
             clients: Arc::new(RwLock::new(HashMap::new())),
@@ -100,5 +112,12 @@ impl AppController {
 
     pub fn streams(&self) -> Vec<StreamDef> {
         self.stream_manager.stream_defs()
+    }
+
+    pub async fn stats(&self) -> AppStats {
+        AppStats {
+            system_status: self.sys_stats.stats().await,
+            clients: self.clients.read().await.len(),
+        }
     }
 }

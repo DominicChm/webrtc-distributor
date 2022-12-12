@@ -1,12 +1,67 @@
-import { writable } from "svelte/store";
+import { derived, readable, writable } from "svelte/store";
+
+
+type stats_t = {
+    system_status: {
+        mem_total: number,
+        mem_used: number,
+        proc_mem: number,
+        cpu_num: number,
+        cpu_used: number,
+        proc_cpu: number,
+        uptime: number,
+        proc_id: number,
+    },
+    clients: number
+}
 
 export let stats_active = writable(true);
 
-export let stats_cpu = writable(0);
-export let stats_proc_cpu = writable(0);
+export let stats = readable<null | stats_t>(null, (set) => {
+    async function update() {
+        try {
+            let s = await (await fetch("/api/stats")).json();
+            set(s);
+        } catch (e) {
+            set(null);
+        }
+    }
+    update();
+    let i = setInterval(update, 1000);
 
-export let stats_memory = writable(0);
-export let stats_proc_memory = writable(0);
+    return () => {
+        console.log("killed");
+        clearInterval(i);
+    }
+})
+
+export let cpu_percent = derived(stats, (v) => {
+    if (v)
+        return Math.round(v.system_status.cpu_used).toString().padStart(2, "0");
+    else
+        return "??";
+});
+
+export let proc_cpu_percent = derived(stats, (v) => {
+    if (v)
+        return Math.round(v.system_status.proc_cpu).toString().padStart(2, "0");
+    else
+        return "??";
+});
+
+export let mem_percent = derived(stats, (v) => {
+    if (v)
+        return Math.round(v.system_status.mem_used/v.system_status.mem_total*100).toString().padStart(2, "0");
+    else
+        return "??";
+});
+
+export let proc_mem_pretty = derived(stats, (v) => {
+    if (v)
+        return fmtBytes(v.system_status.proc_mem, 1);
+    else
+        return "??";
+});
 
 export let stats_clients = writable(0);
 

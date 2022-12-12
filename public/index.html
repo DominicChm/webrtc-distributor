@@ -65,7 +65,7 @@
         window.startSession = async () => {
             console.log("GOING");
 
-            let res = await fetch(`/signal/${uid}`, {
+            let res = await fetch(`/api/signal/${uid}`, {
                 method: "POST",
                 body: JSON.stringify(pc.localDescription)
             });

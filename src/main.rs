@@ -8,7 +8,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
-
+mod stats;
 use stream_manager::StreamManager;
 use structopt::StructOpt;
 use webrtc::{

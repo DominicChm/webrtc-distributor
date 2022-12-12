@@ -2,10 +2,10 @@
     import Stats from "./Stats.svelte";
     import { ChartBar } from "phosphor-svelte";
     import { Cpu, Question, Broadcast } from "phosphor-svelte";
-    import { stats_active } from "./stores/stores";
+    import { stats_active } from "./stores/stats";
 </script>
 
-<div class="navbar bg-base-100 shadow-md">
+<div class="navbar bg-base-100 shadow-md z-40 relative">
     <div class="flex-1">
         <button class="btn btn-ghost normal-case text-xl prose">CHANGEME</button>
     </div>
