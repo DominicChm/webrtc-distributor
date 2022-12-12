@@ -1,54 +1,51 @@
 <script>
-    import {Cpu} from "phosphor-svelte"
-//https://www.xicons.org/#/
+    import { Cpu, MonitorPlay, Stack } from "phosphor-svelte";
+    import { stats_active } from "./stores/stores";
+    //https://www.xicons.org/#/
 </script>
 
-<div class="stats shadow">
-    <div class="stat">
-        <div class="stat-figure text-secondary">
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                class="inline-block w-8 h-8 stroke-current"
-                ><path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                /></svg
-            >
-        </div>
-        <div class="stat-title">Downloads</div>
-        <div class="stat-value">31K</div>
-        <div class="stat-desc">Jan 1st - Feb 1st</div>
-    </div>
+<div
+    class="shadow absolute bottom-3 md:right-3 md:left-auto left-3 right-3 transition-all duration-100 opacity-0 flex justify-center"
+    class:opacity-100={$stats_active}
+>
+    <div class="stats">
+        <div class="stat relative">
+            <div class="stat-figure text-secondary">
+                <MonitorPlay size="40" />
+            </div>
+            <div class="stat-title">Watchers</div>
+            <div class="stat-value">1</div>
+            <div class="stat-desc" />
 
-    <div class="stat">
-        <div class="stat-figure text-secondary">
-            <Cpu size="40"/>
+            <div class="absolute top-0 left-0 right-0 bottom-0 opacity-0 hover:opacity-100 bg-base-100 transition-all duration-100">
+                <div class="stat">More watcher stats here...</div>
+            </div>
         </div>
-        <div class="stat-title">New Users</div>
-        <div class="stat-value">4,200</div>
-    </div>
 
-    <div class="stat">
-        <div class="stat-figure text-secondary">
-            <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                class="inline-block w-8 h-8 stroke-current"
-                ><path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-                /></svg
-            >
+        <div class="stat relative">
+            <div class="stat-figure text-secondary">
+                <Cpu size="40" />
+            </div>
+            <div class="stat-title">CPU Usage</div>
+            <div class="stat-value">10%</div>
+            <div class="stat-desc">(5%)</div>
+
+            <div class="absolute top-0 left-0 right-0 bottom-0 opacity-0 hover:opacity-100 bg-base-100 transition-all duration-100">
+                <div class="stat">More CPU stats here...</div>
+            </div>
         </div>
-        <div class="stat-title">New Registers</div>
-        <div class="stat-value">1,200</div>
-        <div class="stat-desc">↘︎ 90 (14%)</div>
+
+        <div class="stat relative">
+            <div class="stat-figure text-secondary">
+                <Stack size="40" />
+            </div>
+            <div class="stat-title">RAM Usage</div>
+            <div class="stat-value">1.1GB</div>
+            <div class="stat-desc">(14%)</div>
+
+            <div class="absolute top-0 left-0 right-0 bottom-0 opacity-0 hover:opacity-100 bg-base-100 transition-all duration-100">
+                <div class="stat">More memory stats here...</div>
+            </div>
+        </div>
     </div>
 </div>

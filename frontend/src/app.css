@@ -1,3 +1,12 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.btn {
+  text-transform: none;
+}
+
+.preview {
+  background-image: radial-gradient(hsla(var(--bc)/.2) .5px, hsla(var(--b2)/1) .5px);
+  background-size: 5px 5px;
+}
