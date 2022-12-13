@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
 };
 mod stats;
+use serde::{Serialize, Deserialize};
 use stream_manager::StreamManager;
 use structopt::StructOpt;
 use webrtc::{
@@ -29,7 +30,7 @@ struct Opt {
 
 pub struct Config {}
 
-#[derive(Hash, Clone, PartialEq, Eq, Debug)]
+#[derive(Hash, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct StreamDef {
     id: String,    // Stream ID. Should be unique
     default: bool, // Added by default when a new client connects?
@@ -37,7 +38,7 @@ pub struct StreamDef {
     audio: Option<TrackDef>,
 }
 
-#[derive(Hash, Clone, PartialEq, Eq, Debug)]
+#[derive(Hash, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct TrackDef {
     port: u16,          // Stream port
     ip: Option<IpAddr>, // Optional IP to get stream from. Used for multicast addresses. Default is localhost

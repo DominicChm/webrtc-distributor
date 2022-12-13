@@ -42,6 +42,10 @@ pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
                     rt.block_on(async { stats(&c).await })
                 },
 
+                (GET) (/api/streams) => {
+                    Response::json(&c.streams())
+                },
+
                 // default route
                 _ => Response::text("Endpoint not found").with_status_code(400)
             )

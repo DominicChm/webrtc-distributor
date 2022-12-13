@@ -15,8 +15,6 @@ type stats_t = {
     clients: number
 }
 
-export let stats_active = writable(true);
-
 export let stats = readable<null | stats_t>(null, (set) => {
     async function update() {
         try {
@@ -30,7 +28,6 @@ export let stats = readable<null | stats_t>(null, (set) => {
     let i = setInterval(update, 1000);
 
     return () => {
-        console.log("killed");
         clearInterval(i);
     }
 })
@@ -63,7 +60,12 @@ export let proc_mem_pretty = derived(stats, (v) => {
         return "??";
 });
 
-export let stats_clients = writable(0);
+export let num_clients = derived(stats, (v) => {
+    if (v)
+        return v.clients;
+    else
+        return "??";
+});
 
 export function fmtBytes(bytes, decimals = 2) {
     if (!+bytes) return '0 Bytes'
