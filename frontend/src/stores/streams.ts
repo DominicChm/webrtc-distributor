@@ -1,4 +1,4 @@
-import { readable } from "svelte/store";
+import { derived, readable, writable } from "svelte/store";
 
 type track_def_t = {
     port: number,
@@ -29,3 +29,5 @@ export let stream_defs = readable<null | stream_def_t>(null, (set) => {
         clearInterval(i);
     }
 });
+
+export let tracks = derived

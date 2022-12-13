@@ -2,7 +2,7 @@
     import { fade } from "svelte/transition";
     import { streams_active } from "../../stores/modals";
     import { stream_defs } from "../../stores/streams";
-
+    import { Pencil, Plus } from "phosphor-svelte";
     function close() {
         $streams_active = false;
     }
@@ -16,7 +16,7 @@
         <h1>Streams</h1>
         <div class="overflow-x-auto w-full text-lg">
             {#if $stream_defs}
-                <table class="table w-full">
+                <table class="table w-full mb-1">
                     <!-- head -->
                     <thead>
                         <tr>
@@ -47,20 +47,29 @@
                                         <span class="badge badge-ghost badge-sm">None</span>
                                     {/if}
                                 </td>
+
                                 <td>
                                     {#if s.audio}
-                                        {s.video.ip} : {s.video.port}
+                                        {s.audio.ip} : {s.audio.port}
                                     {:else}
                                         <span class="badge badge-ghost badge-sm">None</span>
                                     {/if}
                                 </td>
                                 <th>
-                                    <button disabled class="btn btn-ghost btn-xs">EDIT</button>
+                                    <button disabled class="btn btn-square btn-md">
+                                        <Pencil size="25"/>
+                                    </button>
                                 </th>
+                                
                             </tr>
                         {/each}
                     </tbody>
                 </table>
+                <div class="p-1 flex justify-center overflow-hidden">
+                    <button class="btn btn-ghost btn-square">
+                        <Plus size="25"/>
+                    </button>
+                </div>
             {:else}
                 <div class="flex flex-col justify-center items-center">
                     <progress class="progress w-85 progress-primary	" />

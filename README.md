@@ -1,14 +1,13 @@
+# EasyStreamer
 Download ffmpeg.exe and ffprobe.exe and put in root project dir
-
-## Note: Not sure about the final name yet. Any ideas? :)
 
 # Quickstart
 
 # Why?
 ... same as old archive
 
-# Interacting with CHANGEME
-You have two options for interacting with CHANGEME. For quick projects that don't need more than basic stream viewing, using the internal webserver is the fastest way to get started. For more complicated projects, or for embedding into an existing web UI, a JSON api is provided through STDIN and STDOUT.
+# Interacting with EasyStreamer
+You have two options for interacting with EasyStreamer. For quick projects that don't need more than basic stream viewing, using the internal webserver is the fastest way to get started. For more complicated projects, or for embedding into an existing web UI, a JSON api is provided through STDIN and STDOUT.
 
 # Configuration
 ... JSON config file.
@@ -54,7 +53,7 @@ I: Delete Stream: Deletes an RTP stream. May trigger RENEGOTIATION.
 Low-framerate video with frequent GOPs.\
 `./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=1 -vcodec libx264 -b:v 2M -g 3 -tune zerolatency -pkt_size 1200 -f rtp rtp://239.7.69.7:5002`
 
-GOP burst at start of encoding stream. Makes it so the fast-forward buffer is immediately populated, allowing semi-instant connections to get instant video. Note: Requires CHANGEME to be started BEFORE ffmpeg\
+GOP burst at start of encoding stream. Makes it so the fast-forward buffer is immediately populated, allowing semi-instant connections to get instant video. Note: Requires EasyStreamer to be started BEFORE ffmpeg\
 `./ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=1 -vcodec libx264 -force_key_frames "expr:gte(3,n)" -b:v 2M -g 100 -tune zerolatency -pkt_size 1200 -f rtp rtp://239.7.69.7:5002`
 
 High framerate version of the previous command\
