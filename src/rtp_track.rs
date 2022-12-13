@@ -1,6 +1,6 @@
 use crate::net_util::listen_udp;
 use crate::{StreamDef, TrackDef};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tokio::net::UdpSocket;
 use tokio::sync::broadcast::{self, Receiver, Sender};
 use tokio::sync::RwLock;
@@ -8,9 +8,9 @@ use webrtc::rtp::packet::Packet;
 use webrtc::util::Unmarshal;
 
 pub struct RtpTrack {
-    ff_packets: Arc<RwLock<Vec<Arc<Packet>>>>,
     pub stream_def: StreamDef,
     pub track_def: TrackDef,
+    ff_packets: Arc<RwLock<Vec<Arc<Packet>>>>,
     subscriber: Receiver<Arc<Packet>>,
 }
 
@@ -35,7 +35,7 @@ impl RtpTrack {
 
         let (tx, subscriber) = broadcast::channel::<Arc<Packet>>(100);
 
-        RtpTrack::task_rtp_reader(Some(ff_packets.clone()), tx, track_def.clone());
+        RtpTrack::task_rtp_reader(Arc::downgrade(&ff_packets), tx, track_def.clone(), true);
 
         RtpTrack {
             ff_packets,
@@ -51,9 +51,10 @@ impl RtpTrack {
      * for fast-starting new clients.
      */
     fn task_rtp_reader(
-        ff_packets: Option<Arc<RwLock<Vec<Arc<Packet>>>>>,
-        send: Sender<Arc<Packet>>,
+        ff_packets: Weak<RwLock<Vec<Arc<Packet>>>>,
+        broadcast: Sender<Arc<Packet>>,
         def: TrackDef,
+        do_buffering: bool,
     ) {
         tokio::spawn(async move {
             let mut stream_state = StreamState::default();
@@ -79,26 +80,32 @@ impl RtpTrack {
                     let mut b: &[u8] = &trimmed;
                     let pkt = Arc::new(Packet::unmarshal(&mut b).unwrap());
 
-                    // If passed a FF buffer, handle FF buffering
-                    if let Some(ff) = ff_packets.clone() {
-                        RtpTrack::handle_ff_buffering(
-                            ff.clone(),
-                            pkt.clone(),
-                            &def,
-                            &mut stream_state,
-                        )
-                        .await;
+                    // Handle buffering
+                    match ff_packets.upgrade() {
+                        Some(ff) if do_buffering => {
+                            RtpTrack::handle_ff_buffering(ff, pkt.clone(), &def, &mut stream_state)
+                                .await;
+                        }
+
+                        // If the RTP track is deleted, the ff_packets arc will become invalid.
+                        // In that case, exit the RTP reader.
+                        None => {
+                            println!("FF buffer gone. Exiting RTP");
+                            break;
+                        }
+                        _ => (),
                     }
 
                     // Broadcast the packet. Listeners should be BufferedTracks, which
                     // then distribute to individual clients
-                    if let Err(e) = send.send(pkt) {
+                    if let Err(e) = broadcast.send(pkt) {
                         println!("BROADCAST ERR: {}", e);
                     }
                 } else {
                     println!("Problem receiving from UDP socket");
                 }
             }
+            println!("RTP reader exited.")
         });
     }
 

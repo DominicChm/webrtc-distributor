@@ -73,9 +73,14 @@ async fn signal(request: &Request, a: &Arc<AppController>, uid: String) -> Respo
     let offer: RTCSessionDescription = serde_json::from_str(&buf).unwrap();
 
     let a_i = a.clone();
-    let res = a_i.signal(uid, offer).await;
 
-    Response::json(&res)
+    match a_i.signal(uid, offer).await {
+        Ok(res) => Response::json(&res),
+        Err(e) => {
+            eprintln!("Signalling request failed: {}", e);
+            Response::text(e.to_string()).with_status_code(500)
+        }
+    }
 }
 
 async fn stats(a: &Arc<AppController>) -> Response {

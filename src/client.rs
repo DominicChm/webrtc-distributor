@@ -15,19 +15,17 @@ use webrtc::{
 };
 
 use crate::{buffered_track::BufferedTrack, stream_manager::Stream, StreamDef};
-
-#[derive(Clone)]
+use anyhow::{Error, Ok};
 struct TrackedStream {
     stream: Arc<Stream>,
     sender: Arc<RTCRtpSender>,
-    buffer: Arc<BufferedTrack>,
+    buffer: BufferedTrack,
 }
 pub struct Client {
     streams: Arc<RwLock<HashMap<StreamDef, TrackedStream>>>,
-    peer_connection: Arc<RTCPeerConnection>,
+    peer_connection: RTCPeerConnection,
     watch_peer_status: watch::Receiver<RTCPeerConnectionState>,
     watch_failed: watch::Receiver<bool>,
-    offer_response: RwLock<Option<RTCSessionDescription>>,
 }
 
 impl Client {
@@ -56,7 +54,7 @@ impl Client {
         };
 
         // Create this client's peer connection
-        let peer_connection = Arc::new(api.new_peer_connection(config).await.unwrap());
+        let peer_connection = api.new_peer_connection(config).await.unwrap();
 
         let (watch_tx, watch_peer_status) = watch::channel(RTCPeerConnectionState::Unspecified);
 
@@ -85,7 +83,6 @@ impl Client {
             peer_connection,
             watch_peer_status,
             watch_failed,
-            offer_response: RwLock::new(None),
         };
 
         c.task_track_controller(watch_failed_tx);
@@ -97,16 +94,18 @@ impl Client {
     // based on connection state
     pub fn task_track_controller(&self, watch_failed: watch::Sender<bool>) {
         let mut ps = self.watch_peer_status.clone();
-        let streams = self.streams.clone();
+        let streams = Arc::downgrade(&self.streams);
 
         tokio::spawn(async move {
             loop {
-                ps.changed().await.unwrap();
+                ps.changed().await?;
                 let state = ps.borrow().clone();
+
                 print!("CONNECTION STATE CHANGE: {:?}", state);
                 match state {
                     RTCPeerConnectionState::Connected => {
-                        let streams_lock = streams.read().await;
+                        let streams_arc = streams.upgrade().ok_or(Error::msg("No streams"))?;
+                        let streams_lock = streams_arc.read().await;
                         println!(" - resuming {} streams", streams_lock.len());
                         for s in streams_lock.values() {
                             s.buffer.resume().await;
@@ -120,33 +119,23 @@ impl Client {
                     s => println!("{}", s),
                 }
             }
+            Ok::<()>(())
         });
     }
-    // TODO: Error handling
-    pub async fn signal(&self, offer: RTCSessionDescription) -> RTCSessionDescription {
-        //println!("Signalling");
+    
 
+    pub async fn signal(&self, offer: RTCSessionDescription) -> Result<RTCSessionDescription> {
         // Set the remote SessionDescription
-        self.peer_connection
-            .set_remote_description(offer)
-            .await
-            .expect("SIGNAL ERROR: set_remote_description");
+        self.peer_connection.set_remote_description(offer).await?;
 
         // Create channel that is blocked until ICE Gathering is complete
         let mut gather_complete = self.peer_connection.gathering_complete_promise().await;
 
         // Create an answer
-        let answer = self
-            .peer_connection
-            .create_answer(None)
-            .await
-            .expect("SIGNAL ERROR: create_answer");
+        let answer = self.peer_connection.create_answer(None).await?;
 
         // Sets the LocalDescription, and starts our UDP listeners
-        self.peer_connection
-            .set_local_description(answer)
-            .await
-            .expect("SIGNAL ERROR: set_local_description");
+        self.peer_connection.set_local_description(answer).await?;
 
         // Block until ICE Gathering is complete, disabling trickle ICE
         // we do this because we only can exchange one signaling message
@@ -156,9 +145,13 @@ impl Client {
         // atm. So this only works on local networks for now.
         let _ = gather_complete.recv().await;
 
-        let r = self.peer_connection.local_description().await.unwrap();
+        let r = self
+            .peer_connection
+            .local_description()
+            .await
+            .ok_or(Error::msg("local description generation failed"))?;
 
-        r
+        Ok(r)
     }
 
     /**
@@ -173,7 +166,8 @@ impl Client {
         if let Some(ref rtp_track) = stream.video {
             println!("Creating video track");
 
-            let buffered_track = Arc::new(BufferedTrack::new(rtp_track.clone()));
+            let buffered_track = BufferedTrack::new(rtp_track.clone());
+
             let rtp_sender = self
                 .peer_connection
                 .add_track(buffered_track.track.clone())
@@ -181,16 +175,16 @@ impl Client {
                 .expect("Failed to add track");
 
             let i_sender = rtp_sender.clone();
+
+            // Read RTCP packets. Can't do anything with them ATM.
             tokio::spawn(async move {
                 let mut rtcp_buf = vec![0u8; 1500];
-                while let Ok((_, _)) = i_sender.read(&mut rtcp_buf).await {}
-                println!("RTCP RXer FAILED");
-                Result::<()>::Ok(())
+                while i_sender.read(&mut rtcp_buf).await.is_ok() {}
             });
 
             // Add tracked stream
             let t = TrackedStream {
-                buffer: buffered_track.clone(),
+                buffer: buffered_track,
                 sender: rtp_sender.clone(),
                 stream: stream.clone(),
             };
@@ -212,8 +206,8 @@ impl Client {
      * Cleans up after a webrtc client has disconnected.
      * Takes ownership of self so no futher calls are possible.
      */
-    pub fn discard(self) {
-        todo!("Implement");
+    pub async fn discard(&self) {
+        self.peer_connection.close().await.unwrap();
     }
 
     pub fn watch_fail(&self) -> watch::Receiver<bool> {

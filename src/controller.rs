@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
 use serde::Serialize;
 use tokio::sync::{broadcast, RwLock};
@@ -45,35 +48,43 @@ impl AppController {
         }
     }
 
-    pub async fn ensure_client(&self, client_id: &String) -> Arc<Client> {
+    pub async fn ensure_client(&self, client_id: &String) -> Weak<Client> {
         let client_exists = self.clients.read().await.contains_key(client_id);
 
         if !client_exists {
-            self.initialize_client(client_id).await;
+            self.initialize_client(client_id).await
+        } else {
+            Arc::downgrade(self.clients.read().await.get(client_id).unwrap())
         }
-
-        self.clients.read().await.get(client_id).unwrap().clone()
     }
 
-    pub async fn initialize_client(&self, client_id: &String) {
+    pub async fn initialize_client(&self, client_id: &String) -> Weak<Client> {
         let mut m = self.clients.write().await;
-
         let c = Arc::new(Client::new().await);
-
         m.insert(client_id.clone(), c.clone());
+        drop(m);
 
+        
+
+        // Spawn kill watcher. Deallocs and cleans up after closed clients.
         let c_inner = c.clone();
         let id_inner = client_id.clone();
         let clients = self.clients.clone();
         tokio::spawn(async move {
             c_inner.watch_fail().changed().await.unwrap();
-            println!("Client failed - cleaning it up.");
+            drop(c_inner);
 
             let mut m = clients.write().await;
-            m.remove(&id_inner);
-        });
+            let c = m.remove(&id_inner).unwrap();
+            
+            c.discard().await;
+            println!(
+                "Client dropped! ({} strong arcs)",
+                Arc::strong_count(&c)
+            );
 
-        drop(m);
+            drop(c);
+        });
 
         // TEST: ADD STREAM
         let s = self
@@ -82,16 +93,18 @@ impl AppController {
             .unwrap();
 
         c.add_stream(s).await;
+
+        Arc::downgrade(&c)
     }
 
     pub async fn signal(
         &self,
         client_id: String,
         offer: RTCSessionDescription,
-    ) -> RTCSessionDescription {
+    ) -> Result<RTCSessionDescription, anyhow::Error> {
         let c = self.ensure_client(&client_id).await;
 
-        c.signal(offer).await
+        c.upgrade().unwrap().signal(offer).await
     }
 
     pub async fn client_add_stream(&self, client_id: String, stream_id: String) {
@@ -99,7 +112,7 @@ impl AppController {
 
         let s = self.stream_manager.get_stream(stream_id).unwrap();
 
-        c.add_stream(s).await;
+        c.upgrade().unwrap().add_stream(s).await;
     }
 
     pub async fn client_remove_stream(&self, _client_id: String, _stream_id: String) {

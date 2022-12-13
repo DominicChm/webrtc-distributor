@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crate::rtp_track::RtpTrack;
 use crate::StreamDef;
@@ -76,7 +76,10 @@ impl StreamManager {
     }
 
     pub fn get_stream(&self, stream_id: String) -> Option<Arc<Stream>> {
-        self.streams.get(&stream_id).clone().map(|f| f.clone())
+        self.streams
+            .get(&stream_id)
+            .clone()
+            .map(|f| f.clone())
     }
 
     pub fn stream_defs(&self) -> Vec<StreamDef> {
