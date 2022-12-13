@@ -8,7 +8,7 @@
   import Streams from "./modals/Streams.svelte";
 </script>
 
-<main class="preview h-full flex-1 min-w-max relative overflow-hidden">
+<main class="preview h-full max-w-full flex-1 relative overflow-hidden">
   <Navbar />
 
   <!-- Handle visibility HERE so that, if not visible, relevant APIs aren't being polled -->

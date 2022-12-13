@@ -13,6 +13,7 @@ pub struct RtpTrack {
     ff_packets: Arc<RwLock<Vec<Arc<Packet>>>>,
     subscriber: Receiver<Arc<Packet>>,
 }
+const MAX_PACKETS: usize = 10000;
 
 #[derive(Default, Clone, Copy)]
 pub struct StreamState {
@@ -33,7 +34,7 @@ impl RtpTrack {
         // Distribute to feeders
         let ff_packets: Arc<RwLock<Vec<Arc<Packet>>>> = Arc::new(RwLock::new(Vec::new()));
 
-        let (tx, subscriber) = broadcast::channel::<Arc<Packet>>(100);
+        let (tx, subscriber) = broadcast::channel::<Arc<Packet>>(MAX_PACKETS);
 
         RtpTrack::task_rtp_reader(Arc::downgrade(&ff_packets), tx, track_def.clone(), true);
 
@@ -54,7 +55,7 @@ impl RtpTrack {
         ff_packets: Weak<RwLock<Vec<Arc<Packet>>>>,
         broadcast: Sender<Arc<Packet>>,
         def: TrackDef,
-        do_buffering: bool,
+        fast_start: bool,
     ) {
         tokio::spawn(async move {
             let mut stream_state = StreamState::default();
@@ -82,7 +83,7 @@ impl RtpTrack {
 
                     // Handle buffering
                     match ff_packets.upgrade() {
-                        Some(ff) if do_buffering => {
+                        Some(ff) if fast_start => {
                             RtpTrack::handle_ff_buffering(ff, pkt.clone(), &def, &mut stream_state)
                                 .await;
                         }
