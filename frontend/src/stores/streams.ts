@@ -1,22 +1,13 @@
 import { derived, readable, writable } from "svelte/store";
+import { API_STREAMS, type stream_def_t } from "./net";
 
-type track_def_t = {
-    port: number,
-    ip: string,
-    codec: string
-};
+export let stream_ids = writable([]);
 
-type stream_def_t = {
-    id: string,
-    default: boolean,
-    video?: track_def_t,
-    audio?: track_def_t
-}[];
 
 export let stream_defs = readable<null | stream_def_t>(null, (set) => {
     async function update() {
         try {
-            let s = await (await fetch("/api/streams")).json();
+            let s = await (await fetch(API_STREAMS)).json();
             set(s);
         } catch (e) {
             set(null);
@@ -30,4 +21,3 @@ export let stream_defs = readable<null | stream_def_t>(null, (set) => {
     }
 });
 
-export let tracks = derived

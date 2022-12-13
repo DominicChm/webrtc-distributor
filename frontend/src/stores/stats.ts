@@ -1,19 +1,5 @@
 import { derived, readable, writable } from "svelte/store";
-
-
-type stats_t = {
-    system_status: {
-        mem_total: number,
-        mem_used: number,
-        proc_mem: number,
-        cpu_num: number,
-        cpu_used: number,
-        proc_cpu: number,
-        uptime: number,
-        proc_id: number,
-    },
-    clients: number
-}
+import type { API_STATS, stats_t } from "./net";
 
 export let stats = readable<null | stats_t>(null, (set) => {
     async function update() {
@@ -48,7 +34,7 @@ export let proc_cpu_percent = derived(stats, (v) => {
 
 export let mem_percent = derived(stats, (v) => {
     if (v)
-        return Math.round(v.system_status.mem_used/v.system_status.mem_total*100).toString().padStart(2, "0");
+        return Math.round(v.system_status.mem_used / v.system_status.mem_total * 100).toString().padStart(2, "0");
     else
         return "??";
 });

@@ -1,11 +1,17 @@
-<main class="aspect-video bg-black relative overflow-hidden rounded-lg justify-items-center ">
-    <header class="absolute z-10 p-2 backdrop-blur-md">TOPKEK</header>
-    <video autoplay controls class="w-full h-full z-0">
-</main>
+<script lang="ts">
+    import { onMount } from "svelte";
 
-<style>
-    main {
-        max-height: calc(100vh - 5rem);
-        object-fit: cover;
-    }
-</style>
+    export let stream: MediaStream;
+
+    let video;
+    onMount(() => {
+        video.srcObject = stream;
+    });
+</script>
+
+<div class="aspect-video bg-black relative overflow-hidden rounded-lg justify-items-center video">
+    <header class="absolute z-10 p-2 backdrop-blur-md">{stream.id}</header>
+
+    <!-- svelte-ignore a11y-media-has-caption -->
+    <video autoplay muted class="w-full h-full z-0" bind:this={video} />
+</div>
