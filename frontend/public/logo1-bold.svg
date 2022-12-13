@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg viewBox="103.882 101.752 293.834 296.497" xmlns="http://www.w3.org/2000/svg">
+  <rect width="256" height="256" fill="none" id="rect853" transform="matrix(1, 0, 0, 1, 21.999988, 190.297078)"/>
+  <circle cx="250.799" cy="250.001" r="32" fill="none" stroke-linecap="round" stroke-linejoin="round" id="circle855" style="stroke-opacity: 1; stroke: rgb(0, 0, 0); stroke-width: 19.6016px;" transform="matrix(1.024647, 0, 0, 1.016006, -6.181515, -4.002061)"/>
+  <path d="M 198.644 301.715 C 191.913 295.048 186.554 287.146 182.865 278.449 C 175.076 260.269 175.076 239.732 182.865 221.552 C 186.554 212.855 191.913 204.954 198.644 198.286" fill="none" stroke-linecap="round" stroke-linejoin="round" id="path857" style="stroke-opacity: 1; stroke: rgb(248, 105, 23); stroke-width: 35px;"/>
+  <path d="M 302.954 198.286 C 309.686 204.954 315.044 212.855 318.733 221.552 C 326.524 239.732 326.524 260.269 318.733 278.449 C 315.044 287.146 309.686 295.048 302.954 301.715" fill="none" stroke-linecap="round" stroke-linejoin="round" id="path859" style="stroke-opacity: 1; stroke: rgb(204, 0, 10); stroke-width: 35px;"/>
+  <path d="M 169.647 330.468 C 159.192 320.083 150.844 307.804 145.055 294.298 C 133.032 265.97 133.032 234.031 145.055 205.703 C 150.844 192.197 159.192 179.918 169.647 169.533" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" id="path861" style="stroke: rgb(11, 155, 57); stroke-opacity: 1; stroke-width: 35px;"/>
+  <path d="M 331.951 169.533 C 342.407 179.918 350.754 192.197 356.543 205.703 C 368.567 234.031 368.567 265.97 356.543 294.298 C 350.754 307.804 342.407 320.083 331.951 330.468" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" id="path863" style="stroke: rgb(54, 133, 203); stroke-opacity: 1; stroke-width: 35px;"/>
+</svg>

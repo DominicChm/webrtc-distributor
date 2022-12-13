@@ -1,6 +1,6 @@
 <script>
     import { Cpu, MonitorPlay, Stack } from "phosphor-svelte";
-    import { cpu_percent, proc_cpu_percent, mem_percent, proc_mem_pretty, stats_active } from "./stores/stats";
+    import { cpu_percent, proc_cpu_percent, mem_percent, proc_mem_pretty, stats_active } from "../stores/stats";
     import { fly } from "svelte/transition";
     //https://www.xicons.org/#/
 </script>
