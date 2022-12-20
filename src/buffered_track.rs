@@ -6,6 +6,9 @@ use webrtc::rtp::packet::Packet;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocalWriter};
 
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+
 use crate::rtp_track::RtpTrack;
 pub struct BufferedTrack {
     pub track: Arc<TrackLocalStaticRTP>,
@@ -18,13 +21,23 @@ pub struct BufferedTrack {
  */
 impl BufferedTrack {
     pub fn new(rtp_track: Arc<RtpTrack>) -> BufferedTrack {
+        let suffix: String = thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(5)
+            .map(char::from)
+            .collect();
+            
+        let mut sid = rtp_track.stream_def.id.clone();
+        sid.push_str("_");
+        sid.push_str(suffix.as_str());
+
         let track = Arc::new(TrackLocalStaticRTP::new(
             RTCRtpCodecCapability {
                 mime_type: rtp_track.track_def.mime_type().unwrap().to_string(),
                 ..Default::default()
             },
             rtp_track.track_def.stream_id().to_string(), // id describes this track, within the context of its group. IE you usually have "video" and "audio"
-            rtp_track.stream_def.id.clone(), // Stream ID is the unique group this track belongs to.
+            sid, // Stream ID is the unique group this track belongs to.
         ));
 
         println!("Starting buffered pusher task");

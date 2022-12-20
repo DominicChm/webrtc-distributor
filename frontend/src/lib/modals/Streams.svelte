@@ -1,10 +1,19 @@
 <script>
     import { fade } from "svelte/transition";
     import { streams_active } from "../../stores/modals";
-    import { stream_defs } from "../../stores/streams";
+    import { add_stream, remove_stream, stream_defs } from "../../stores/streams";
     import { Pencil, Plus } from "phosphor-svelte";
+    import {selected_stream_ids} from "../../stores/streams"
     function close() {
         $streams_active = false;
+    }
+
+    function stream_checked(id, ev) {
+        if(ev.target.checked) {
+            add_stream(id);
+        } else {
+            remove_stream(id);
+        }
     }
 </script>
 
@@ -15,7 +24,7 @@
 
         <h1>Streams</h1>
         <div class="overflow-x-auto w-full text-lg">
-            {#if $stream_defs}
+            {#if $stream_defs != null}
                 <table class="table w-full mb-1">
                     <!-- head -->
                     <thead>
@@ -28,11 +37,11 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {#each $stream_defs as s}
+                        {#each $stream_defs as s (s.id)}
                             <tr>
                                 <th>
                                     <label>
-                                        <input type="checkbox" class="checkbox" />
+                                        <input type="checkbox" class="checkbox" checked={$selected_stream_ids.includes(s.id)} on:change={(ev) => stream_checked(s.id, ev)}/>
                                     </label>
                                 </th>
 

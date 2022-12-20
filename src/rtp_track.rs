@@ -1,5 +1,6 @@
 use crate::net_util::listen_udp;
 use crate::{StreamDef, TrackDef};
+use std::collections::VecDeque;
 use std::sync::{Arc, Weak};
 use tokio::net::UdpSocket;
 use tokio::sync::broadcast::{self, Receiver, Sender};
@@ -7,10 +8,18 @@ use tokio::sync::RwLock;
 use webrtc::rtp::packet::Packet;
 use webrtc::util::Unmarshal;
 
+// NOTE: This should probably be a VecDequeue to optimize
+// removal of old packets on new keyframe (see handle_fs_buffering)
+// but VecDequeue is missing truncate_front. For now, not worth reworking
+// for an operation that's done once every second or so.
+// (unless proven otherwise)
+// https://github.com/rust-lang/rust/issues/92547
+type FastStartBuf = RwLock<Vec<Arc<Packet>>>;
+
 pub struct RtpTrack {
     pub stream_def: StreamDef,
     pub track_def: TrackDef,
-    ff_packets: Arc<RwLock<Vec<Arc<Packet>>>>,
+    ff_packets: Arc<FastStartBuf>,
     subscriber: Receiver<Arc<Packet>>,
 }
 const MAX_PACKETS: usize = 10000;
@@ -32,7 +41,7 @@ pub struct StreamState {
 impl RtpTrack {
     pub fn new(track_def: &TrackDef, stream_def: &StreamDef) -> RtpTrack {
         // Distribute to feeders
-        let ff_packets: Arc<RwLock<Vec<Arc<Packet>>>> = Arc::new(RwLock::new(Vec::new()));
+        let ff_packets = Arc::new(RwLock::new(Vec::new()));
 
         let (tx, subscriber) = broadcast::channel::<Arc<Packet>>(MAX_PACKETS);
 
@@ -52,7 +61,7 @@ impl RtpTrack {
      * for fast-starting new clients.
      */
     fn task_rtp_reader(
-        ff_packets: Weak<RwLock<Vec<Arc<Packet>>>>,
+        fast_start_packets: Weak<FastStartBuf>,
         broadcast: Sender<Arc<Packet>>,
         def: TrackDef,
         fast_start: bool,
@@ -60,36 +69,42 @@ impl RtpTrack {
         tokio::spawn(async move {
             let mut stream_state = StreamState::default();
 
-            // Connect to the specified RTP track's socket.
             let sock = listen_udp(&def.socket_addr()).unwrap();
             let sock = UdpSocket::from_std(sock).unwrap();
 
-            // Begin main UDP packet consumption loop
             let mut buf = vec![0u8; 1600];
             loop {
                 if let Ok((n, _)) = sock.recv_from(&mut buf).await {
-                    // Trim the main buf to the # of bytes received
                     let trimmed = buf[..n].to_vec();
 
                     if n > 1200 {
-                        println!("ERROR: Received an RTP packet greater than 1200 bytes! Make sure your format address specifies a max packet size of 1200!! (Hint: try adding `-pkt_size 1200` to your FFMPEG command)");
+                        println!(
+                            "ERROR: Received an RTP packet greater than 1200 bytes! 
+                        Make sure your format address specifies a max packet size of 1200!! 
+                        (Hint: try adding `-pkt_size 1200` to your FFMPEG command)"
+                        );
                         break;
                     }
 
-                    // Parse the incoming data into a Packet struct using WebRtc-rs's unmarshal
-                    // impl. This provides a few utility fields used throughout the process.
+                    // Parse the incoming data into a Packet struct
+                    // using WebRtc-rs's unmarshal to access RTP information.
                     let mut b: &[u8] = &trimmed;
                     let pkt = Arc::new(Packet::unmarshal(&mut b).unwrap());
 
-                    // Handle buffering
-                    match ff_packets.upgrade() {
+                    // Handle buffering (if enabled) and exiting on main struct deletion
+                    // We use the dropping of the fast_start_packets Arc to recognize the
+                    // deletion of the parent track.
+                    match fast_start_packets.upgrade() {
                         Some(ff) if fast_start => {
-                            RtpTrack::handle_ff_buffering(ff, pkt.clone(), &def, &mut stream_state)
-                                .await;
+                            RtpTrack::handle_fast_start_buffering(
+                                ff,
+                                pkt.clone(),
+                                &def,
+                                &mut stream_state,
+                            )
+                            .await;
                         }
 
-                        // If the RTP track is deleted, the ff_packets arc will become invalid.
-                        // In that case, exit the RTP reader.
                         None => {
                             println!("FF buffer gone. Exiting RTP");
                             break;
@@ -97,8 +112,7 @@ impl RtpTrack {
                         _ => (),
                     }
 
-                    // Broadcast the packet. Listeners should be BufferedTracks, which
-                    // then distribute to individual clients
+                    // Broadcast the packet to listening BufferedTracks
                     if let Err(e) = broadcast.send(pkt) {
                         println!("BROADCAST ERR: {}", e);
                     }
@@ -122,18 +136,19 @@ impl RtpTrack {
      * Notably, this approach should be good for CPU-constrained environments
      * like embedded systems. (TO BE PROVEN :/)
      */
-    pub async fn handle_ff_buffering(
+    pub async fn handle_fast_start_buffering(
         ff: Arc<RwLock<Vec<Arc<Packet>>>>,
         pkt: Arc<Packet>,
         def: &TrackDef,
         state: &mut StreamState,
     ) {
-        // Lock the fast-forward buffer for reading/writing
         let mut ff = ff.write().await;
 
-        // Ensures that buffering code is only run if there's at least one pkt in the ff buffer.
+        // Ensure that buffering code is only run if there's at least one pkt in the ff buffer.
         if let Some(last_pkt) = ff.last() {
+            // New timestamp = new group of packets = new frame
             let is_new_gop = last_pkt.header.timestamp != pkt.header.timestamp;
+
             state.found_kf |= def.is_keyframe(&pkt);
 
             if is_new_gop {
@@ -162,7 +177,6 @@ impl RtpTrack {
             }
         }
 
-        // Store new packet in fast forward buffer
         state.num_packets_buffered += 1;
         ff.push(pkt.clone());
     }

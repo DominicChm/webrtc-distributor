@@ -72,7 +72,26 @@ Find webcams \
 
 Stream from webcam \
 `./ffmpeg -re -f dshow -i video="USB 2.0 Camera" -vcodec libx264 -force_key_frames "expr:gte(3,n)" -b:v 2M -g 1000 -preset ultrafast -tune zerolatency -bf 0 -pkt_size 1200 -f rtp rtp://239.7.69.7:5002`
+
+## Priority TODOs
+- Stream add, remove
+- Config serialization
+- Streams add option - persistant?: bool
+  - If persistant, changes are written to passed config.
+- Managed/Unmanaged streams (managed, internal - unmanaged, external)
+  - Managed streams can be started/stopped as clients are added/dropped, saving on encoding power.
+  - Managed streams can have their settings simplified
+  - LOOK INTO if rawvideo format can take input over UDP / non-stdin
+    - Use case: opencv python -> EasyStreamer ffmpeg
+  - https://ffmpeg-user.ffmpeg.narkive.com/eeg4eddb/detecting-frames-on-raw-video-stream
+- Config
+  - option to allow config mutation by clients (--allow-config ?)
+  - Maybe general option for mutation, then secondary for web clients specifically?
+- Web server port
+
 ## TODO ideas
 - Datachannel to notify when buffering complete, so flash of fast-start/fast-forward isn't seen
 - stdout/stdin API (JSON/CSV/etc)
 - bframe detection and HOW TO DISABLE hint for h264
+- Automatic codec detection
+- ffmpeg command generation help/automation

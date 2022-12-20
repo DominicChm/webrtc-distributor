@@ -1,6 +1,9 @@
 use anyhow::Result;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{watch, RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tokio::sync::{watch, Mutex, RwLock};
 use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
@@ -15,7 +18,6 @@ use webrtc::{
 };
 
 use crate::{buffered_track::BufferedTrack, stream_manager::Stream, StreamDef};
-use anyhow::{Error, Ok};
 struct TrackedStream {
     stream: Arc<Stream>,
     sender: Arc<RTCRtpSender>,
@@ -26,17 +28,18 @@ pub struct Client {
     peer_connection: RTCPeerConnection,
     watch_peer_status: watch::Receiver<RTCPeerConnectionState>,
     watch_failed: watch::Receiver<bool>,
+    signalling: Mutex<()>,
 }
 
 impl Client {
     // TODO: Error handling
-    pub async fn new() -> Client {
+    pub async fn new() -> Result<Client> {
         // webrtc-rs boilerplate. See their examples for more info
         let mut m = MediaEngine::default();
-        m.register_default_codecs().unwrap();
+        m.register_default_codecs()?;
 
         let mut registry = Registry::new();
-        registry = register_default_interceptors(registry, &mut m).unwrap();
+        registry = register_default_interceptors(registry, &mut m)?;
 
         let api = Arc::new(
             APIBuilder::new()
@@ -54,7 +57,7 @@ impl Client {
         };
 
         // Create this client's peer connection
-        let peer_connection = api.new_peer_connection(config).await.unwrap();
+        let peer_connection = api.new_peer_connection(config).await?;
 
         let (watch_tx, watch_peer_status) = watch::channel(RTCPeerConnectionState::Unspecified);
 
@@ -72,7 +75,7 @@ impl Client {
         peer_connection.on_peer_connection_state_change(Box::new(
             move |s: RTCPeerConnectionState| {
                 println!("Peer connection state: {}", s);
-                watch_tx.send(s);
+                watch_tx.send(s).expect("connection state send err");
                 Box::pin(async {})
             },
         ));
@@ -83,11 +86,12 @@ impl Client {
             peer_connection,
             watch_peer_status,
             watch_failed,
+            signalling: Mutex::new(()),
         };
 
         c.task_track_controller(watch_failed_tx);
 
-        c
+        Ok(c)
     }
 
     // Task for asynchronously controller internal track buffers
@@ -104,7 +108,9 @@ impl Client {
                 print!("CONNECTION STATE CHANGE: {:?}", state);
                 match state {
                     RTCPeerConnectionState::Connected => {
-                        let streams_arc = streams.upgrade().ok_or(Error::msg("No streams"))?;
+                        let streams_arc = streams
+                            .upgrade()
+                            .ok_or(anyhow::Error::msg("Error upgrading streams"))?;
                         let streams_lock = streams_arc.read().await;
                         println!(" - resuming {} streams", streams_lock.len());
                         for s in streams_lock.values() {
@@ -119,12 +125,14 @@ impl Client {
                     s => println!("{}", s),
                 }
             }
-            Ok::<()>(())
+            anyhow::Ok::<()>(())
         });
     }
-    
 
     pub async fn signal(&self, offer: RTCSessionDescription) -> Result<RTCSessionDescription> {
+        // Holding this mutex will prevent multiple signals from happening simultaneously
+        let _sig_lock = self.signalling.lock().await;
+
         // Set the remote SessionDescription
         self.peer_connection.set_remote_description(offer).await?;
 
@@ -149,7 +157,7 @@ impl Client {
             .peer_connection
             .local_description()
             .await
-            .ok_or(Error::msg("local description generation failed"))?;
+            .ok_or(anyhow::Error::msg("local description generation failed"))?;
 
         Ok(r)
     }
@@ -160,8 +168,6 @@ impl Client {
      */
     pub async fn add_stream(&self, stream: Arc<Stream>) {
         println!("Adding stream");
-
-        //TODO: Check if stream already exists.
 
         if let Some(ref rtp_track) = stream.video {
             println!("Creating video track");
@@ -191,15 +197,27 @@ impl Client {
 
             let mut s = self.streams.write().await;
             s.insert(stream.def.clone(), t);
+
+            dbg!(s.keys());
         }
+
     }
 
     /**
      * Links the track with the passed index to the passed RTP stream.
      * Switches with fast-forwarding, allowing seamless switches.
      */
-    pub fn remove_stream(&mut self, _stream: StreamDef) {
-        todo!("Implement");
+    pub async fn remove_stream(&self, stream: Arc<Stream>) -> Result<()> {
+        let mut s = self.streams.write().await;
+        let tracked_stream = s
+            .get(&stream.def)
+            .ok_or(anyhow::Error::msg("Couldn't find stream to remove"))?;
+
+        self.peer_connection.remove_track(&tracked_stream.sender).await?;
+        
+
+        s.remove(&stream.def);
+        Ok(())
     }
 
     /**
@@ -212,6 +230,17 @@ impl Client {
 
     pub fn watch_fail(&self) -> watch::Receiver<bool> {
         self.watch_failed.clone()
+    }
+
+    pub async fn stream_ids(&self) -> HashSet<String> {
+        self.streams
+            .read()
+            .await
+            .keys()
+            .clone()
+            .into_iter()
+            .map(|s| s.id.clone())
+            .collect()
     }
 }
 

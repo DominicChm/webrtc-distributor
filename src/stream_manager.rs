@@ -70,14 +70,14 @@ impl StreamManager {
         s
     }
 
-    pub fn delete_stream(&mut self, id: String) {
-        self.streams.remove(&id);
+    pub fn delete_stream(&mut self, id: &String) {
+        self.streams.remove(id);
         todo!("Finish stream deletion");
     }
 
-    pub fn get_stream(&self, stream_id: String) -> Option<Arc<Stream>> {
+    pub fn get_stream(&self, stream_id: &String) -> Option<Arc<Stream>> {
         self.streams
-            .get(&stream_id)
+            .get(stream_id)
             .clone()
             .map(|f| f.clone())
     }

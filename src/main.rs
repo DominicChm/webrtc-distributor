@@ -1,4 +1,4 @@
-mod controller;
+mod app_controller;
 
 mod rtp_track;
 //mod server;
@@ -133,6 +133,17 @@ async fn main() {
         id: "test_stream".to_string(),
         default: true,
         video: Some(TrackDef {
+            codec: "vp8".to_string(),
+            port: 5002,
+            ip: Some("239.7.69.7".parse::<IpAddr>().unwrap()),
+        }),
+        audio: None,
+    };
+
+    let test_stream2 = StreamDef {
+        id: "test_stream_2".to_string(),
+        default: true,
+        video: Some(TrackDef {
             codec: "h264".to_string(),
             port: 5002,
             ip: Some("239.7.69.7".parse::<IpAddr>().unwrap()),
@@ -140,9 +151,12 @@ async fn main() {
         audio: None,
     };
     let mut sm = StreamManager::new();
+    
     sm.create_stream(test_stream);
+    sm.create_stream(test_stream2);
 
-    let c = Arc::new(controller::AppController::new(sm));
+
+    let c = Arc::new(app_controller::AppController::new(sm));
 
     server::init(c, tokio::runtime::Handle::current())
         .join()

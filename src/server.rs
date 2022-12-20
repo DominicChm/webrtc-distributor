@@ -7,22 +7,12 @@ use sysinfo::{System, SystemExt};
 use tokio::runtime::Handle;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
-use crate::{controller::AppController, stats::SystemStatusReader};
+use crate::{app_controller::AppController, stats::SystemStatusReader};
 
-#[derive(Serialize, Deserialize)]
-pub struct ClientRPC {
-    session: String,
-    rpc: RPC,
-}
-
-#[derive(Serialize, Deserialize)]
-//#[serde(tag = "type")]
-pub enum RPC {
-    NEGOTIATE(RTCSessionDescription),
-}
-
-pub enum RPCResponse {
-    NEGOTIATE(RTCSessionDescription),
+#[derive(Deserialize)]
+struct StreamSignalling {
+    stream_ids: Vec<String>,
+    offer: RTCSessionDescription,
 }
 
 pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
@@ -36,6 +26,9 @@ pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
 
                 (POST) (/api/signal/{uid: String}) => {
                     rt.block_on(async { signal(&request, &c, uid).await })
+                },
+                (POST) (/api/streamsignal/{uid: String}) => {
+                    rt.block_on(async { stream_signal(&request, &c, uid).await })
                 },
 
                 (GET) (/api/stats) => {
@@ -74,7 +67,27 @@ async fn signal(request: &Request, a: &Arc<AppController>, uid: String) -> Respo
 
     let a_i = a.clone();
 
-    match a_i.signal(uid, offer).await {
+    match a_i.signal(&uid, offer).await {
+        Ok(res) => Response::json(&res),
+        Err(e) => {
+            eprintln!("Signalling request failed: {}", e);
+            Response::text(e.to_string()).with_status_code(500)
+        }
+    }
+}
+
+async fn stream_signal(request: &Request, a: &Arc<AppController>, uid: String) -> Response {
+    println!("Got STREAM signalling request. UID: {}", uid);
+
+    let mut buf = String::new();
+    request.data().unwrap().read_to_string(&mut buf).unwrap();
+
+    let signalling: StreamSignalling = serde_json::from_str(&buf).unwrap();
+
+    let a_i = a.clone();
+    a_i.client_sync_streams(&uid, signalling.stream_ids).await;
+
+    match a_i.signal(&uid, signalling.offer).await {
         Ok(res) => Response::json(&res),
         Err(e) => {
             eprintln!("Signalling request failed: {}", e);
