@@ -17,6 +17,9 @@ pub fn listen_udp(addr: &SocketAddr) -> Result<std::net::UdpSocket, io::Error> {
     }
 }
 
+/**
+ * Binds a non-multicast UDP address, with reuseaddr set.
+ */
 pub fn bind_udp(addr: &SocketAddr) -> Result<std::net::UdpSocket, io::Error> {
     let socket =
         match addr.ip() {

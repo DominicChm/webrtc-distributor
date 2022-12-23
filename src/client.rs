@@ -8,7 +8,7 @@ use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
     },
-    ice_transport::ice_server::RTCIceServer,
+    ice_transport::{ice_connection_state::RTCIceConnectionState, ice_server::RTCIceServer},
     interceptor::registry::Registry,
     peer_connection::{
         configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
@@ -21,7 +21,7 @@ use crate::{buffered_track::BufferedTrack, stream_manager::Stream, StreamDef};
 struct TrackedStream {
     stream: Arc<Stream>,
     sender: Arc<RTCRtpSender>,
-    buffer: BufferedTrack,
+    buffer: Arc<BufferedTrack>,
 }
 pub struct Client {
     streams: Arc<RwLock<HashMap<StreamDef, TrackedStream>>>,
@@ -62,12 +62,12 @@ impl Client {
         let (watch_tx, watch_peer_status) = watch::channel(RTCPeerConnectionState::Unspecified);
 
         // Register handlers
-        // peer_connection.on_ice_connection_state_change(Box::new(
-        //     move |connection_state: RTCIceConnectionState| {
-        //         watch_tx.send(connection_state).unwrap();
-        //         Box::pin(async {})
-        //     },
-        // ));
+        peer_connection.on_ice_connection_state_change(Box::new(
+            move |connection_state: RTCIceConnectionState| {
+                println!("ICE CONN STATE: {}", connection_state);
+                Box::pin(async {})
+            },
+        ));
 
         // Set the handler for Peer connection state
         // This will notify you when the peer has connected/disconnected
@@ -172,7 +172,7 @@ impl Client {
         if let Some(ref rtp_track) = stream.video {
             println!("Creating video track");
 
-            let buffered_track = BufferedTrack::new(rtp_track.clone());
+            let buffered_track = Arc::new(BufferedTrack::new(rtp_track.clone()));
 
             let rtp_sender = self
                 .peer_connection
@@ -190,17 +190,25 @@ impl Client {
 
             // Add tracked stream
             let t = TrackedStream {
-                buffer: buffered_track,
+                buffer: buffered_track.clone(),
                 sender: rtp_sender.clone(),
                 stream: stream.clone(),
             };
 
             let mut s = self.streams.write().await;
+
+            // If the client is already connected, immidiately resume the track
+            if *self.watch_peer_status.borrow() == RTCPeerConnectionState::Connected {
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    buffered_track.resume().await;
+                });
+            }
+
             s.insert(stream.def.clone(), t);
 
-            dbg!(s.keys());
+            //dbg!(s.keys());
         }
-
     }
 
     /**
@@ -213,8 +221,9 @@ impl Client {
             .get(&stream.def)
             .ok_or(anyhow::Error::msg("Couldn't find stream to remove"))?;
 
-        self.peer_connection.remove_track(&tracked_stream.sender).await?;
-        
+        self.peer_connection
+            .remove_track(&tracked_stream.sender)
+            .await?;
 
         s.remove(&stream.def);
         Ok(())

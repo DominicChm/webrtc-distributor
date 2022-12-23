@@ -1,4 +1,4 @@
-import { derived, readable, writable } from "svelte/store";
+import { derived, get, readable, writable } from "svelte/store";
 import { API_STREAMS, type stream_def_t } from "./net";
 
 const uid = uuidv4();
@@ -73,6 +73,11 @@ export const media_streams = readable({}, (set) => {
         set(s);
     }
 
+    function on_track_mute(id, stream) {
+        delete s[id];
+        set(s);
+    }
+
     function on_track(ev: RTCTrackEvent) {
         console.log("NEW TRACK")
         console.log(ev);
@@ -86,8 +91,9 @@ export const media_streams = readable({}, (set) => {
         if (s[id]) { return }
 
         // Init this new media stream
-        stream.onremovetrack = on_remove_track;
+        //stream.onremovetrack = on_remove_track;
         ev.track.onunmute = () => on_track_unmute(id, stream);
+        ev.track.onmute = () => on_track_mute(id, stream);
     }
 
     function on_remove_track(ev: MediaStreamTrackEvent) {
@@ -96,9 +102,9 @@ export const media_streams = readable({}, (set) => {
         console.log(`REMOVE TRACK ${this.id}`)
         let id = this.id;
         if (ev.track.kind == 'video') {
-            //delete s[id];
+            delete s[id];
         }
-        //set(s);
+        set(s);
     }
 
     pc.ontrack = on_track;
@@ -113,7 +119,9 @@ selected_stream_ids.subscribe(ids => {
 
 
 export async function add_stream(id: string) {
-    pc.addTransceiver('video', { 'direction': 'recvonly' });
+    if(pc.getTransceivers().length <= get(selected_stream_ids).length) {
+        pc.addTransceiver('video');
+    }
     selected_stream_ids.update(i => [...i, id]);
 }
 

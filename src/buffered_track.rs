@@ -40,8 +40,6 @@ impl BufferedTrack {
             sid, // Stream ID is the unique group this track belongs to.
         ));
 
-        println!("Starting buffered pusher task");
-
         BufferedTrack {
             rtp_track,
             track,
@@ -55,10 +53,10 @@ impl BufferedTrack {
         ff_buf: Vec<Arc<Packet>>,
         mut subscription: broadcast::Receiver<Arc<Packet>>,
     ) {
-        println!("Trying to start pusher task");
         tokio::spawn(async move {
             let (tx, mut rx) = mpsc::unbounded_channel::<Arc<Packet>>();
 
+            println!("Starting pusher task. Will burst {} packets", ff_buf.len());
             // Populate the initial send queue before starting on the tx loop
             for pkt in ff_buf.iter() {
                 tx.send(pkt.clone()).unwrap();

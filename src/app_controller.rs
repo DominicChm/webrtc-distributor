@@ -145,7 +145,7 @@ impl AppController {
         dbg!(&removed_stream_ids);
         for id in removed_stream_ids {
             if let Some(s) = self.stream_manager.get_stream(id) {
-                println!("Sync: Removing stream {} to client", id);
+                println!("Sync: Removing stream {} from client", id);
                 c.remove_stream(s).await;
             }
         }
