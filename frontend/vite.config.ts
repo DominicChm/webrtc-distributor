@@ -8,5 +8,14 @@ export default defineConfig({
     proxy: { 
       "/api": "http://127.0.0.1:80"
     }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        assetFileNames: '[name]-[hash][extname]',
+        chunkFileNames: '[name]-[hash].js',
+        entryFileNames: '[name]-[hash].js',
+      }
+    }
   }
 })

@@ -61,10 +61,6 @@ export async function signal(streams: string[]) {
     } catch (e) {
         console.error(e)
     }
-
-    pc.onconnectionstatechange = () => {
-        
-    };
 }
 
 export const media_streams = readable({}, (set) => {

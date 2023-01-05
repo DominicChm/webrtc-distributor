@@ -1,9 +1,15 @@
-use std::{io::Read, sync::Arc};
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time,
+};
 
 // Powers the internal server
 use crate::{app_controller::AppController, stats::SystemStatusReader};
-use anyhow::{anyhow, Result};
-use rouille::{router, Request, Response};
+use anyhow::{anyhow, bail, Result};
+use rouille::{extension_to_mime, router, Request, Response};
+use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use sysinfo::{System, SystemExt};
 use tokio::runtime::Handle;
@@ -22,15 +28,14 @@ struct SyncRequest {
     uid: String,
 }
 
+#[derive(RustEmbed)]
+#[folder = "frontend/dist/"]
+struct Assets;
+
 pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         rouille::start_server("0.0.0.0:80", move |request| {
             router!(request,
-                // Hosts main page
-                (GET) (/) => {
-                    serve_index(&request)
-                },
-
                 // WebRTC Signalling API
                 // Controls what streams are being sent and WebRTC signalling
                 (POST) (/api/signal) => {
@@ -63,21 +68,15 @@ pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
                 },
 
                 // default route
-                _ => Response::text("Endpoint not found").with_status_code(400)
+                _ => serve_default(&request)
             )
         })
     })
 }
 
-fn serve_index(_request: &Request) -> Response {
-    if cfg!(debug_assertions) {
-        Response::from_file(
-            "text/html",
-            std::fs::File::open("public/index.html").expect("Unable to read index file."),
-        )
-    } else {
-        Response::html(include_str!("../public/index.html"))
-    }
+fn serve_default(request: &Request) -> Response {
+    match_embedded_asset(request, "index.html")
+        .unwrap_or_else(|e| Response::text(e.to_string()).with_status_code(400))
 }
 
 async fn signal(request: &Request, app_controller: &Arc<AppController>) -> Result<Response> {
@@ -130,4 +129,21 @@ async fn resync(request: &Request, app_controller: &Arc<AppController>) -> Resul
 async fn stats(a: &Arc<AppController>) -> Response {
     let stats = a.stats().await;
     Response::json(&stats)
+}
+
+pub fn match_embedded_asset(request: &Request, root: &str) -> Result<Response> {
+    let raw_path = if request.url().len() <= 1 {
+        root.to_string()
+    } else {
+        request.url().split_at(1).1.to_string()
+    };
+
+    eprintln!("SERVING: {}", &raw_path);
+
+    let file = Assets::get(&raw_path).ok_or(anyhow!("No file found"))?;
+
+    let path = request.url().parse::<PathBuf>()?;
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("html");
+
+    Ok(Response::from_data(extension_to_mime(ext), file.data))
 }
