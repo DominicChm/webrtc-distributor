@@ -43,8 +43,8 @@ export async function signal(streams: string[]) {
     await pc.setLocalDescription(lo);
 
     console.log(pc.localDescription);
-    let res;
-    res = await fetch(`/api/signal`, {
+
+    let res = await fetch(`/api/signal`, {
         method: "POST",
         body: JSON.stringify({
             uid,
@@ -55,15 +55,16 @@ export async function signal(streams: string[]) {
 
     let sd = await res.json();
     console.log(sd);
-    if (sd === '') {
-        return alert('Session Description must not be empty')
-    }
 
     try {
         pc.setRemoteDescription(new RTCSessionDescription(sd))
     } catch (e) {
-        alert(e)
+        console.error(e)
     }
+
+    pc.onconnectionstatechange = () => {
+        
+    };
 }
 
 export const media_streams = readable({}, (set) => {
@@ -85,7 +86,7 @@ export const media_streams = readable({}, (set) => {
 
         let stream = ev.streams[0]
 
-        if(!stream) return;
+        if (!stream) return;
 
         let id = stream.id;
 
@@ -95,6 +96,8 @@ export const media_streams = readable({}, (set) => {
         //stream.onremovetrack = on_remove_track;
         ev.track.onunmute = () => on_track_unmute(id, stream);
         ev.track.onmute = () => on_track_mute(id, stream);
+
+        // Starts the stream
         fetch(`/api/resync`, {
             method: "POST",
             body: JSON.stringify({
@@ -127,7 +130,7 @@ selected_stream_ids.subscribe(ids => {
 
 
 export async function add_stream(id: string) {
-    if(pc.getTransceivers().length <= get(selected_stream_ids).length) {
+    if (pc.getTransceivers().length <= get(selected_stream_ids).length) {
         pc.addTransceiver('video');
     }
     selected_stream_ids.update(i => [...i, id]);

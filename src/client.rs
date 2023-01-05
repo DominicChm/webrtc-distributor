@@ -107,16 +107,15 @@ impl Client {
 
                 print!("CONNECTION STATE CHANGE: {:?}", state);
                 match state {
-                    // This now handled by client
                     RTCPeerConnectionState::Connected => {
-                        // let streams_arc = streams
-                        //     .upgrade()
-                        //     .ok_or(anyhow::Error::msg("Error upgrading streams"))?;
-                        // let streams_lock = streams_arc.read().await;
-                        // println!(" - resuming {} streams", streams_lock.len());
-                        // for s in streams_lock.values() {
-                        //     s.buffer.resume().await;
-                        // }
+                        let streams_arc = streams
+                            .upgrade()
+                            .ok_or(anyhow::Error::msg("Error upgrading streams"))?;
+                        let streams_lock = streams_arc.read().await;
+                        println!(" - resuming {} streams", streams_lock.len());
+                        for tracked_stream in streams_lock.values() {
+                            tracked_stream.buffer.resync().await;
+                        }
                     }
                     RTCPeerConnectionState::Disconnected => {
                         println!(" - cleaning up.");
@@ -249,8 +248,11 @@ impl Client {
      * Re-starts the internal buffered track to force a track re-sync on the client.
      */
     pub async fn resync_stream(&self, stream_id: String) {
-        let streams = self.streams.write().await;
-        streams.get(&stream_id).unwrap().buffer.resync().await;
+        // Only perform a re-sync if connected.
+        if self.peer_connection.connection_state() == RTCPeerConnectionState::Connected {
+            let streams = self.streams.read().await;
+            streams.get(&stream_id).unwrap().buffer.resync().await;
+        }
     }
 }
 
