@@ -17,14 +17,14 @@ use webrtc::{
     rtp_transceiver::rtp_sender::RTCRtpSender,
 };
 
-use crate::{buffered_track::BufferedTrack, stream_manager::Stream, StreamDef};
+use crate::{buffered_track::BufferedTrack, stream_manager::Stream};
 struct TrackedStream {
     stream: Arc<Stream>,
     sender: Arc<RTCRtpSender>,
     buffer: Arc<BufferedTrack>,
 }
 pub struct Client {
-    streams: Arc<RwLock<HashMap<StreamDef, TrackedStream>>>,
+    streams: Arc<RwLock<HashMap<String, TrackedStream>>>,
     peer_connection: RTCPeerConnection,
     watch_peer_status: watch::Receiver<RTCPeerConnectionState>,
     watch_failed: watch::Receiver<bool>,
@@ -107,15 +107,16 @@ impl Client {
 
                 print!("CONNECTION STATE CHANGE: {:?}", state);
                 match state {
+                    // This now handled by client
                     RTCPeerConnectionState::Connected => {
-                        let streams_arc = streams
-                            .upgrade()
-                            .ok_or(anyhow::Error::msg("Error upgrading streams"))?;
-                        let streams_lock = streams_arc.read().await;
-                        println!(" - resuming {} streams", streams_lock.len());
-                        for s in streams_lock.values() {
-                            s.buffer.resume().await;
-                        }
+                        // let streams_arc = streams
+                        //     .upgrade()
+                        //     .ok_or(anyhow::Error::msg("Error upgrading streams"))?;
+                        // let streams_lock = streams_arc.read().await;
+                        // println!(" - resuming {} streams", streams_lock.len());
+                        // for s in streams_lock.values() {
+                        //     s.buffer.resume().await;
+                        // }
                     }
                     RTCPeerConnectionState::Disconnected => {
                         println!(" - cleaning up.");
@@ -172,11 +173,11 @@ impl Client {
         if let Some(ref rtp_track) = stream.video {
             println!("Creating video track");
 
-            let buffered_track = Arc::new(BufferedTrack::new(rtp_track.clone()));
+            let buffered_track = BufferedTrack::new(rtp_track.clone());
 
             let rtp_sender = self
                 .peer_connection
-                .add_track(buffered_track.track.clone())
+                .add_track(buffered_track.rtc_track.clone())
                 .await
                 .expect("Failed to add track");
 
@@ -197,15 +198,7 @@ impl Client {
 
             let mut s = self.streams.write().await;
 
-            // If the client is already connected, immidiately resume the track
-            if *self.watch_peer_status.borrow() == RTCPeerConnectionState::Connected {
-                tokio::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    buffered_track.resume().await;
-                });
-            }
-
-            s.insert(stream.def.clone(), t);
+            s.insert(stream.def.id.clone(), t);
 
             //dbg!(s.keys());
         }
@@ -218,14 +211,14 @@ impl Client {
     pub async fn remove_stream(&self, stream: Arc<Stream>) -> Result<()> {
         let mut s = self.streams.write().await;
         let tracked_stream = s
-            .get(&stream.def)
+            .get(&stream.def.id)
             .ok_or(anyhow::Error::msg("Couldn't find stream to remove"))?;
 
         self.peer_connection
             .remove_track(&tracked_stream.sender)
             .await?;
 
-        s.remove(&stream.def);
+        s.remove(&stream.def.id);
         Ok(())
     }
 
@@ -248,8 +241,16 @@ impl Client {
             .keys()
             .clone()
             .into_iter()
-            .map(|s| s.id.clone())
+            .map(|s| s.clone())
             .collect()
+    }
+
+    /**
+     * Re-starts the internal buffered track to force a track re-sync on the client.
+     */
+    pub async fn resync_stream(&self, stream_id: String) {
+        let streams = self.streams.write().await;
+        streams.get(&stream_id).unwrap().buffer.resync().await;
     }
 }
 

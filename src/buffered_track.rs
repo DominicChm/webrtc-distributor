@@ -1,127 +1,170 @@
 use std::sync::{Arc, Weak};
 use tokio::select;
 
-use tokio::sync::{broadcast, mpsc, Notify, RwLock};
+use tokio::sync::{mpsc, Notify};
 use webrtc::rtp::packet::Packet;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
-use webrtc::track::track_local::{track_local_static_rtp::TrackLocalStaticRTP, TrackLocalWriter};
+use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
+use webrtc::track::track_local::TrackLocalWriter;
 
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 
 use crate::rtp_track::RtpTrack;
 pub struct BufferedTrack {
-    pub track: Arc<TrackLocalStaticRTP>,
-    pub rtp_track: Arc<RtpTrack>,
-    pusher_spawned: RwLock<bool>,
+    pub rtc_track: Arc<TrackLocalStaticRTP>,
+    pub rtp_track: Weak<RtpTrack>,
+
+    controls: Arc<TaskControls>,
+}
+
+#[derive(Default)]
+pub struct TaskControls {
+    play: Notify,
+    stop: Notify,
+    kill: Notify,
 }
 
 /**
- * Responsible for "Feeding" a track
+ * Manages the link between Easystreamer's internal RTP track (RTPTrack)
+ * and Webrtc-rs's TrackLocalStaticRTP. Supports "fast-starting" a remote client.
  */
 impl BufferedTrack {
-    pub fn new(rtp_track: Arc<RtpTrack>) -> BufferedTrack {
+    pub fn new(rtp_track: Arc<RtpTrack>) -> Arc<BufferedTrack> {
         let suffix: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(5)
             .map(char::from)
             .collect();
-            
-        let mut sid = rtp_track.stream_def.id.clone();
-        sid.push_str("_");
-        sid.push_str(suffix.as_str());
 
-        let track = Arc::new(TrackLocalStaticRTP::new(
+        // Create a completely unique stream ID
+        // TODO: DETERMINE IF NECESSARY (remove if not)
+        // let mut sid = rtp_track.stream_def.id.clone();
+        // sid.push_str("_");
+        // sid.push_str(suffix.as_str());
+
+        let rtc_track = Arc::new(TrackLocalStaticRTP::new(
             RTCRtpCodecCapability {
                 mime_type: rtp_track.track_def.mime_type().unwrap().to_string(),
                 ..Default::default()
             },
             rtp_track.track_def.stream_id().to_string(), // id describes this track, within the context of its group. IE you usually have "video" and "audio"
-            sid, // Stream ID is the unique group this track belongs to.
+            rtp_track.stream_def.id.clone(), // Stream ID is the unique group this track belongs to.
         ));
 
-        BufferedTrack {
-            rtp_track,
-            track,
-            pusher_spawned: RwLock::new(false),
-        }
+        let buffered_track = Arc::new(BufferedTrack {
+            rtc_track: rtc_track.clone(),
+            rtp_track: Arc::downgrade(&rtp_track),
+            controls: Arc::new(TaskControls::default()),
+        });
+
+        BufferedTrack::pusher_task(Arc::downgrade(&buffered_track));
+
+        buffered_track
     }
 
-    // Creates tokio task for async feeding webrtc track with rtp packets.
-    fn pusher_task(
-        track: Weak<TrackLocalStaticRTP>,
-        ff_buf: Vec<Arc<Packet>>,
-        mut subscription: broadcast::Receiver<Arc<Packet>>,
-    ) {
+    /**
+     * Spawns the internal async thread responsible for pushing packets to webrtc-rs
+     * Takes
+     */
+    fn pusher_task(buffered_track: Weak<BufferedTrack>) {
         tokio::spawn(async move {
-            let (tx, mut rx) = mpsc::unbounded_channel::<Arc<Packet>>();
+            let controls = buffered_track.upgrade().unwrap().controls.clone();
+            'main: loop {
+                // Wait for play before doing anything.
+                controls.play.notified().await;
 
-            println!("Starting pusher task. Will burst {} packets", ff_buf.len());
-            // Populate the initial send queue before starting on the tx loop
-            for pkt in ff_buf.iter() {
-                tx.send(pkt.clone()).unwrap();
-            }
+                // Re-initialize on every iteration
+                let rtp_track = buffered_track
+                    .upgrade()
+                    .unwrap()
+                    .rtp_track
+                    .upgrade()
+                    .unwrap();
 
-            //let recv_future = subscription.recv();
-            // tokio::pin!(recv_future);
-            // Reference: https://github.com/meetecho/janus-gateway/blob/master/src/postprocessing/pp-h264.c
-            // https://webrtchacks.com/what-i-learned-about-h-264-for-webrtc-video-tim-panton/
-            // https://github.com/steely-glint/srtplight
-            loop {
-                tokio::pin! {
-                    let recv_future = subscription.recv();
+                let faststart_buf = rtp_track.ff_buf().await;
+                let mut rtp_subscription = rtp_track.subscribe();
+                drop(rtp_track); // drop the rtp track arc after each iter so we don't keep it uncollected.
+
+                // Initialize the faststart buffer.
+                let (faststart_tx, mut faststart_rx) = mpsc::unbounded_channel::<Arc<Packet>>();
+
+                println!(
+                    "Starting pusher task. Will fast-start {} packets",
+                    faststart_buf.len()
+                );
+
+                // Populate the fast-start send queue before starting on the tx loop
+                for pkt in faststart_buf.iter() {
+                    faststart_tx.send(pkt.clone()).unwrap();
                 }
 
-                select! {
-                    biased;
+                // Reference: https://github.com/meetecho/janus-gateway/blob/master/src/postprocessing/pp-h264.c
+                // https://webrtchacks.com/what-i-learned-about-h-264-for-webrtc-video-tim-panton/
+                // https://github.com/steely-glint/srtplight
+                'inner: loop {
+                    tokio::pin! {
+                        let faststart_recv = faststart_rx.recv();
+                        let rtp_track_recv = rtp_subscription.recv();
+                        let killed_recv = controls.kill.notified();
+                        let stop_recv = controls.stop.notified();
+                    };
 
-                    // All the buffered packets from when this track is created should
-                    // be pushed through RTP before any new packets are pushed
-                    // because this select is biased. Otherwise problems will happen
-                    Some(pkt) = rx.recv()  => {
-                        if let Some(track) = track.upgrade() {
-                            track.write_rtp(&pkt).await.unwrap();
-                        } else {
-                            break;
-                        }
-                    },
+                    select! {
+                        biased;
 
-                    // Once all buffered packets have sent, simply listen on the
-                    // broadcast channel for newly received packets
-                    // and dispatch them
-                    r = &mut recv_future => {
-                        match r {
-                            Ok(pkt) => {
-                                if let Some(track) = track.upgrade() {
-                                    track.write_rtp(&pkt).await.unwrap();
-                                } else {
-                                    break;
-                                }
+                        _ = killed_recv => {
+                            break 'main;
+                        }
+
+                        _ = stop_recv => {
+                            break 'inner;
+                        }
+
+                        // All the buffered packets from when this track is created should
+                        // be pushed through RTP before any new packets are pushed
+                        // because this select is biased. Otherwise problems will happen
+                        Some(pkt) = faststart_recv  => {
+                            if let Some(track) = buffered_track.upgrade() {
+                                track.rtc_track.write_rtp(&pkt).await.unwrap();
+                            } else {
+                                break 'main;
                             }
-                            Err(e) => {
-                                eprintln!("Broadcast RX error {}", e);
+                        },
+
+                        // Once all buffered packets have sent, simply listen on the
+                        // broadcast channel for newly received packets
+                        // and dispatch them
+                        Ok(pkt) = rtp_track_recv => {
+                            if let Some(track) = buffered_track.upgrade() {
+                                track.rtc_track.write_rtp(&pkt).await.unwrap();
+                            } else {
+                                break 'main;
                             }
                         }
+
                     }
-
                 }
+                eprintln!("Buffered writer stopped.");
             }
-            eprintln!("Buffered writer stopped.");
         });
     }
 
-    pub async fn resume(&self) {
-        if self.pusher_spawned.read().await.clone() {
-            eprintln!("Pusher already spawned!");
-            return;
-        }
+    pub async fn play(&self) {
+        self.controls.play.notify_waiters();
+    }
 
-        println!("Resuming buffered track!");
-        let ff_buf = self.rtp_track.ff_buf().await;
-        let pkt_sub = self.rtp_track.subscribe();
-        BufferedTrack::pusher_task(Arc::downgrade(&self.track), ff_buf, pkt_sub);
+    pub async fn stop(&self) {
+        self.controls.play.notify_waiters();
+    }
 
-        let mut b = self.pusher_spawned.write().await;
-        *b = true;
+    pub async fn resync(&self) {
+        println!("RESYNCING");
+        self.controls.stop.notify_waiters();
+        self.controls.play.notify_one();
+    }
+
+    pub async fn kill(&self) {
+        self.controls.kill.notify_one();
     }
 }

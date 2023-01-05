@@ -185,6 +185,11 @@ impl RtpTrack {
         self.ff_packets.read().await.clone()
     }
 
+    /**
+     * Returns a new broadcast handle that distributes this stream's RTP packets
+     * as they're received. Should be used to distribute a stream's packets
+     * to a client. 
+     */
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<Packet>> {
         self.subscriber.resubscribe()
     }

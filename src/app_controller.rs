@@ -153,6 +153,16 @@ impl AppController {
         Ok(())
     }
 
+    pub async fn client_resync_streams(&self, client_id: &String, stream_ids: Vec<String>) -> Result<()> {
+        let c = self.ensure_client(&client_id).await?;
+
+        for id in stream_ids {
+            c.resync_stream(id).await;
+        }
+
+        Ok(())
+    }
+
     fn add_stream(_def: StreamDef) {}
 
     fn delete_stream(_id: String) {}

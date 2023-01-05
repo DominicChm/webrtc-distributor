@@ -44,9 +44,10 @@ export async function signal(streams: string[]) {
 
     console.log(pc.localDescription);
     let res;
-    res = await fetch(`/api/streamsignal/${uid}`, {
+    res = await fetch(`/api/signal`, {
         method: "POST",
         body: JSON.stringify({
+            uid,
             stream_ids: streams,
             offer: pc.localDescription
         })
@@ -94,6 +95,13 @@ export const media_streams = readable({}, (set) => {
         //stream.onremovetrack = on_remove_track;
         ev.track.onunmute = () => on_track_unmute(id, stream);
         ev.track.onmute = () => on_track_mute(id, stream);
+        fetch(`/api/resync`, {
+            method: "POST",
+            body: JSON.stringify({
+                uid,
+                stream_ids: [stream.id],
+            })
+        });
     }
 
     function on_remove_track(ev: MediaStreamTrackEvent) {
