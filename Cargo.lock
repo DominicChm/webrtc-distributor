@@ -821,6 +821,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "easystreamer"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "lazy_static",
+ "notify",
+ "portpicker",
+ "rand",
+ "regex",
+ "rouille",
+ "rtp-rs",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "socket2",
+ "structopt",
+ "sysinfo",
+ "tempfile",
+ "tinytemplate",
+ "tokio",
+ "webrtc",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.14.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2720,31 +2745,6 @@ dependencies = [
  "tokio",
  "webrtc-sctp",
  "webrtc-util",
-]
-
-[[package]]
-name = "webrtc-distributorv2"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "lazy_static",
- "notify",
- "portpicker",
- "rand",
- "regex",
- "rouille",
- "rtp-rs",
- "rust-embed",
- "serde",
- "serde_json",
- "socket2",
- "structopt",
- "sysinfo",
- "tempfile",
- "tinytemplate",
- "tokio",
- "webrtc",
 ]
 
 [[package]]
