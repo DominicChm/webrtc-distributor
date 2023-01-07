@@ -72,6 +72,14 @@ Find webcams \
 
 Stream from webcam \
 `./ffmpeg -re -f dshow -i video="USB 2.0 Camera" -vcodec libx264 -force_key_frames "expr:gte(3,n)" -b:v 2M -g 1000 -preset ultrafast -tune zerolatency -bf 0 -pkt_size 1200 -f rtp rtp://239.7.69.7:5002`
+## Pre-0.0.1-alpha1 checklist
+- [ ] Client stream addition/removal
+- [ ] Dynamic configuration (config.json)
+  - [ ] Option for persistance
+- [ ] Managed, Un-managed streams
+- [ ] API for dynamic addition, removal of streams
+- [ ] JSON api
+- [ ] Documentation!
 
 ## Priority TODOs
 - [x] Stream add, remove
