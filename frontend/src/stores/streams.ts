@@ -71,10 +71,10 @@ export const media_streams = readable({}, (set) => {
         set(s);
     }
 
-    function on_track_mute(id, stream) {
-        delete s[id];
-        set(s);
-    }
+    // function on_track_mute(id, stream) {
+    //     delete s[id];
+    //     set(s);
+    // }
 
     function on_track(ev: RTCTrackEvent) {
         console.log("NEW TRACK")
@@ -91,7 +91,7 @@ export const media_streams = readable({}, (set) => {
         // Init this new media stream
         //stream.onremovetrack = on_remove_track;
         ev.track.onunmute = () => on_track_unmute(id, stream);
-        ev.track.onmute = () => on_track_mute(id, stream);
+        //ev.track.onmute = () => on_track_mute(id, stream);
 
         // Starts the stream
         fetch(`/api/resync`, {

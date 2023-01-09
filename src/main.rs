@@ -133,27 +133,27 @@ async fn main() {
         id: "test_stream".to_string(),
         default: true,
         video: Some(TrackDef {
-            codec: "vp8".to_string(),
+            codec: "libx264".to_string(),
             port: 5002,
-            ip: Some("239.7.69.7".parse::<IpAddr>().unwrap()),
+            ip: Some("0.0.0.0".parse::<IpAddr>().unwrap()),
         }),
         audio: None,
     };
 
-    let test_stream2 = StreamDef {
-        id: "test_stream_2".to_string(),
-        default: true,
-        video: Some(TrackDef {
-            codec: "h264".to_string(),
-            port: 5002,
-            ip: Some("239.7.69.7".parse::<IpAddr>().unwrap()),
-        }),
-        audio: None,
-    };
+    // let test_stream2 = StreamDef {
+    //     id: "test_stream_2".to_string(),
+    //     default: true,
+    //     video: Some(TrackDef {
+    //         codec: "h264".to_string(),
+    //         port: 5002,
+    //         ip: Some("239.7.69.7".parse::<IpAddr>().unwrap()),
+    //     }),
+    //     audio: None,
+    // };
     let mut sm = StreamManager::new();
     
     sm.create_stream(test_stream);
-    sm.create_stream(test_stream2);
+    //sm.create_stream(test_stream2);
 
 
     let c = Arc::new(app_controller::AppController::new(sm));

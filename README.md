@@ -72,6 +72,10 @@ Find webcams \
 
 Stream from webcam \
 `./ffmpeg -re -f dshow -i video="USB 2.0 Camera" -vcodec libx264 -force_key_frames "expr:gte(3,n)" -b:v 2M -g 1000 -preset ultrafast -tune zerolatency -bf 0 -pkt_size 1200 -f rtp rtp://239.7.69.7:5002`
+
+
+WORKING h264 (Note: same as -tune zerolatency, but without --sliced-threads. That opt breaks all but keyframes for some reason...) \
+`./ffmpeg -re -f lavfi -i testsrc=size=1920x1080:rate=30 -vcodec libx264 -g 60 -preset veryfast -b:v 500k -x264opts bframes=0:force-cfr:rc-lookahead=0:sync-lookahead=0:no-mbtree:force-cfr -pkt_size 1200 -f rtp rtp://192.168.1.206:5002` \
 ## Pre-0.0.1-alpha1 checklist
 - [ ] Client stream addition/removal
 - [ ] Dynamic configuration (config.json)
