@@ -1,5 +1,3 @@
-/target
-ffmpeg.exe
-ffprobe.exe
-ffplay.exe
-*.test
+# Core ignores
+/core/target
+/core/*.exe
