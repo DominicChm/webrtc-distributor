@@ -29,7 +29,7 @@ struct SyncRequest {
 }
 
 #[derive(RustEmbed)]
-#[folder = "frontend/dist/"]
+#[folder = "../frontend/dist/"]
 struct Assets;
 
 pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
