@@ -64,7 +64,10 @@ pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
 
                 // Pollable endpoint with info about all available streams.
                 (GET) (/api/streams) => {
-                    Response::json(&c.streams())
+                    rt.block_on(async {
+                        Response::json(&c.streams().await)
+                     })
+                    
                 },
 
                 // default route
@@ -94,8 +97,10 @@ async fn signal(request: &Request, app_controller: &Arc<AppController>) -> Resul
 
     // Sync streams of client with passed UID
     app_controller
-        .client_sync_streams(&signalling.uid, signalling.stream_ids)
-        .await?;
+        .client(&signalling.uid)
+        .await?
+        .sync_active_streams(signalling.stream_ids)
+        .await;
 
     let signal_result = app_controller
         .signal(&signalling.uid, signalling.offer)
@@ -121,9 +126,12 @@ async fn resync(request: &Request, app_controller: &Arc<AppController>) -> Resul
     let req: SyncRequest = serde_json::from_str(&buf).unwrap();
 
     app_controller
-        .client_resync_streams(&req.uid, req.stream_ids)
-        .await
-        .map(|_| Response::text("OK").with_status_code(200))
+        .client(&req.uid)
+        .await?
+        .resync_rtp_streams(req.stream_ids)
+        .await;
+
+    Ok(Response::text("OK").with_status_code(200))
 }
 
 async fn stats(a: &Arc<AppController>) -> Response {

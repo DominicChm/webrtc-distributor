@@ -1,6 +1,6 @@
 use crate::net_util::listen_udp;
-use crate::{StreamDef, TrackDef};
-use std::collections::VecDeque;
+use crate::track_def::{StreamDef, TrackDef};
+
 use std::sync::{Arc, Weak};
 use tokio::net::UdpSocket;
 use tokio::sync::broadcast::{self, Receiver, Sender};
@@ -15,6 +15,7 @@ use webrtc::util::Unmarshal;
 // (unless proven otherwise)
 // https://github.com/rust-lang/rust/issues/92547
 type FastStartBuf = RwLock<Vec<Arc<Packet>>>;
+const MAX_PACKETS: usize = 10000;
 
 pub struct RtpTrack {
     pub stream_def: StreamDef,
@@ -22,7 +23,6 @@ pub struct RtpTrack {
     ff_packets: Arc<FastStartBuf>,
     subscriber: Receiver<Arc<Packet>>,
 }
-const MAX_PACKETS: usize = 10000;
 
 #[derive(Default, Clone, Copy)]
 pub struct StreamState {
@@ -35,6 +35,7 @@ pub struct StreamState {
     found_kf: bool,
     num_packets_buffered: usize,
 }
+
 /**
  * Handles the ingestion and buffering of an RTP track.
  */
@@ -162,7 +163,6 @@ impl RtpTrack {
                     state.found_kf = false;
 
                     // Trim the packet vec, update indices
-                    // TODO: UPDATE VEC TO BE A VECDEQUE
                     // https://users.rust-lang.org/t/best-way-to-drop-range-of-elements-from-front-of-vecdeque/31795
                     drop(ff.drain(..trimmed_start));
 
@@ -181,14 +181,14 @@ impl RtpTrack {
         ff.push(pkt.clone());
     }
 
-    pub async fn ff_buf(&self) -> Vec<Arc<Packet>> {
+    pub async fn fast_start_packets(&self) -> Vec<Arc<Packet>> {
         self.ff_packets.read().await.clone()
     }
 
     /**
      * Returns a new broadcast handle that distributes this stream's RTP packets
      * as they're received. Should be used to distribute a stream's packets
-     * to a client. 
+     * to a client.
      */
     pub fn subscribe(&self) -> broadcast::Receiver<Arc<Packet>> {
         self.subscriber.resubscribe()

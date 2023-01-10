@@ -45,7 +45,7 @@ impl BufferedTrack {
 
         let rtc_track = Arc::new(TrackLocalStaticRTP::new(
             RTCRtpCodecCapability {
-                mime_type: rtp_track.track_def.mime_type().unwrap().to_string(),
+                mime_type: rtp_track.track_def.codec.mime_type().to_string(),
                 ..Default::default()
             },
             rtp_track.track_def.stream_id().to_string(), // id describes this track, within the context of its group. IE you usually have "video" and "audio"
@@ -82,7 +82,7 @@ impl BufferedTrack {
                     .upgrade()
                     .unwrap();
 
-                let faststart_buf = rtp_track.ff_buf().await;
+                let faststart_buf = rtp_track.fast_start_packets().await;
                 let mut rtp_subscription = rtp_track.subscribe();
                 drop(rtp_track); // drop the rtp track arc after each iter so we don't keep it uncollected.
 

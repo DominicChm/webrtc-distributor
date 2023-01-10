@@ -6,8 +6,7 @@ use std::{
 use crate::{
     client::Client,
     stats::{SystemStatus, SystemStatusReader},
-    stream_manager::StreamManager,
-    StreamDef,
+    stream_manager::StreamManager, track_def::StreamDef,
 };
 use anyhow::Result;
 use serde::Serialize;
@@ -22,14 +21,14 @@ pub struct AppStats {
     clients: usize,
 }
 pub struct AppController {
-    stream_manager: StreamManager,
+    stream_manager: Arc<StreamManager>,
 
     clients: Arc<RwLock<HashMap<String, Arc<Client>>>>,
     sys_stats: SystemStatusReader,
 }
 
 impl AppController {
-    pub fn new(stream_manager: StreamManager) -> AppController {
+    pub fn new(stream_manager: Arc<StreamManager>) -> AppController {
         AppController {
             stream_manager,
             sys_stats: SystemStatusReader::new(),
@@ -51,7 +50,7 @@ impl AppController {
 
     pub async fn initialize_client(&self, client_id: &String) -> Result<Arc<Client>> {
         let mut m = self.clients.write().await;
-        let c = Arc::new(Client::new().await?);
+        let c = Client::new(self.stream_manager.clone()).await?;
         m.insert(client_id.clone(), c.clone());
         drop(m);
 
@@ -107,68 +106,8 @@ impl AppController {
         drop(c);
     }
 
-    // // Use client_sync_streams to emulate this functionality.
-    // pub async fn client_add_stream(&self, client_id: &String, stream_id: &String) {
-    //     todo!();
-    //     let c = self.ensure_client(&client_id).await;
-
-    //     let s = self.stream_manager.get_stream(stream_id).unwrap();
-
-    //     //c.upgrade().unwrap().add_stream(s).await;
-    // }
-
-    // pub async fn client_remove_stream(&self, _client_id: String, _stream_id: String) {
-    //     todo!();
-    // }
-
-    pub async fn client_sync_streams(
-        &self,
-        client_id: &String,
-        stream_ids: Vec<String>,
-    ) -> Result<()> {
-        println!("SYNCING");
-        let c = self.ensure_client(&client_id).await?;
-
-        let incoming_stream_set: HashSet<String> = HashSet::from_iter(stream_ids.into_iter());
-        let current_stream_set: HashSet<String> = c.stream_ids().await;
-
-        let added_stream_ids = incoming_stream_set.difference(&current_stream_set);
-        dbg!(&added_stream_ids);
-        for id in added_stream_ids {
-            if let Some(s) = self.stream_manager.get_stream(id) {
-                println!("Sync: Adding stream {} to client", id);
-                c.add_stream(s).await;
-            }
-        }
-
-        let removed_stream_ids = current_stream_set.difference(&incoming_stream_set);
-        dbg!(&removed_stream_ids);
-        for id in removed_stream_ids {
-            if let Some(s) = self.stream_manager.get_stream(id) {
-                println!("Sync: Removing stream {} from client", id);
-                c.remove_stream(s).await;
-            }
-        }
-
-        Ok(())
-    }
-
-    pub async fn client_resync_streams(&self, client_id: &String, stream_ids: Vec<String>) -> Result<()> {
-        let c = self.ensure_client(&client_id).await?;
-
-        for id in stream_ids {
-            c.resync_stream(id).await;
-        }
-
-        Ok(())
-    }
-
-    fn add_stream(_def: StreamDef) {}
-
-    fn delete_stream(_id: String) {}
-
-    pub fn streams(&self) -> Vec<StreamDef> {
-        self.stream_manager.stream_defs()
+    pub async fn streams(&self) -> Vec<StreamDef> {
+        self.stream_manager.stream_defs().await
     }
 
     pub async fn stats(&self) -> AppStats {
@@ -176,5 +115,9 @@ impl AppController {
             system_status: self.sys_stats.stats().await,
             clients: self.clients.read().await.len(),
         }
+    }
+
+    pub async fn client(&self, client_id: &String) -> Result<Arc<Client>> {
+        self.ensure_client(&client_id).await
     }
 }

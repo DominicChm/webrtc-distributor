@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 use tokio::sync::{watch, Mutex, RwLock};
 use webrtc::{
@@ -17,7 +17,10 @@ use webrtc::{
     rtp_transceiver::rtp_sender::RTCRtpSender,
 };
 
-use crate::{buffered_track::BufferedTrack, stream_manager::Stream};
+use crate::{
+    buffered_track::BufferedTrack,
+    stream_manager::{Stream, StreamManager},
+};
 struct TrackedStream {
     stream: Arc<Stream>,
     sender: Arc<RTCRtpSender>,
@@ -25,15 +28,18 @@ struct TrackedStream {
 }
 pub struct Client {
     streams: Arc<RwLock<HashMap<String, TrackedStream>>>,
+    stream_manager: Arc<StreamManager>,
     peer_connection: RTCPeerConnection,
-    watch_peer_status: watch::Receiver<RTCPeerConnectionState>,
-    watch_failed: watch::Receiver<bool>,
+    on_peer_status: watch::Receiver<RTCPeerConnectionState>,
+    on_connection_failed: watch::Sender<bool>,
+
+    /// Used to prevent simultaneous signalling. Used in "signalling" function
     signalling: Mutex<()>,
 }
 
 impl Client {
     // TODO: Error handling
-    pub async fn new() -> Result<Client> {
+    pub async fn new(stream_manager: Arc<StreamManager>) -> Result<Arc<Client>> {
         // webrtc-rs boilerplate. See their examples for more info
         let mut m = MediaEngine::default();
         m.register_default_codecs()?;
@@ -61,46 +67,44 @@ impl Client {
 
         let (watch_tx, watch_peer_status) = watch::channel(RTCPeerConnectionState::Unspecified);
 
-        // Register handlers
-        peer_connection.on_ice_connection_state_change(Box::new(
-            move |connection_state: RTCIceConnectionState| {
-                println!("ICE CONN STATE: {}", connection_state);
-                Box::pin(async {})
-            },
-        ));
+        // // Register handlers
+        // peer_connection.on_ice_connection_state_change(Box::new(
+        //     move |connection_state: RTCIceConnectionState| {
+        //         println!("ICE CONN STATE: {}", connection_state);
+        //         Box::pin(async {})
+        //     },
+        // ));
 
-        // Set the handler for Peer connection state
-        // This will notify you when the peer has connected/disconnected
-
+        // Connect state change to a tokio watch. task_track_controller will handle side-effects.
         peer_connection.on_peer_connection_state_change(Box::new(
             move |s: RTCPeerConnectionState| {
-                println!("Peer connection state: {}", s);
                 watch_tx.send(s).expect("connection state send err");
                 Box::pin(async {})
             },
         ));
-        let (watch_failed_tx, watch_failed) = watch::channel(false);
+        let (watch_failed_tx, _) = watch::channel(false);
 
-        let c = Client {
+        let c = Arc::new(Client {
             streams: Arc::new(RwLock::new(HashMap::new())),
             peer_connection,
-            watch_peer_status,
-            watch_failed,
+            on_peer_status: watch_peer_status,
+            stream_manager,
+            on_connection_failed: watch_failed_tx,
             signalling: Mutex::new(()),
-        };
+        });
 
-        c.task_track_controller(watch_failed_tx);
+        Client::task_track_controller(Arc::downgrade(&c));
 
         Ok(c)
     }
 
     // Task for asynchronously controller internal track buffers
     // based on connection state
-    pub fn task_track_controller(&self, watch_failed: watch::Sender<bool>) {
-        let mut ps = self.watch_peer_status.clone();
-        let streams = Arc::downgrade(&self.streams);
-
+    pub fn task_track_controller(parent: Weak<Client>) {
         tokio::spawn(async move {
+            let mut ps = parent.upgrade().unwrap().on_peer_status.clone();
+            let streams = Arc::downgrade(&parent.upgrade().unwrap().streams);
+
             loop {
                 ps.changed().await?;
                 let state = ps.borrow().clone();
@@ -119,7 +123,7 @@ impl Client {
                     }
                     RTCPeerConnectionState::Disconnected => {
                         println!(" - cleaning up.");
-                        watch_failed.send(true).ok();
+                        parent.upgrade().unwrap().on_connection_failed.send(true).ok();
                         break;
                     }
                     s => println!("{}", s),
@@ -230,7 +234,7 @@ impl Client {
     }
 
     pub fn watch_fail(&self) -> watch::Receiver<bool> {
-        self.watch_failed.clone()
+        self.on_connection_failed.subscribe()
     }
 
     pub async fn stream_ids(&self) -> HashSet<String> {
@@ -244,8 +248,43 @@ impl Client {
             .collect()
     }
 
+    pub async fn sync_active_streams(
+        &self,
+        stream_ids: Vec<String>,
+    ) {
+        let incoming_stream_set: HashSet<String> = HashSet::from_iter(stream_ids.into_iter());
+        let current_stream_set: HashSet<String> = self.stream_ids().await;
+
+        let added_stream_ids = incoming_stream_set.difference(&current_stream_set);
+        dbg!(&added_stream_ids);
+        for id in added_stream_ids {
+            if let Some(s) = self.stream_manager.get_stream(id).await {
+                println!("Sync: Adding stream {} to client", id);
+                self.add_stream(s).await;
+            }
+        }
+
+        let removed_stream_ids = current_stream_set.difference(&incoming_stream_set);
+        dbg!(&removed_stream_ids);
+        for id in removed_stream_ids {
+            if let Some(s) = self.stream_manager.get_stream(id).await {
+                println!("Sync: Removing stream {} from client", id);
+                self.remove_stream(s).await;
+            }
+        }
+    }
+
     /**
-     * Re-starts the internal buffered track to force a track re-sync on the client.
+     * Re-starts the internal buffered track to force a GOP re-sync on the client.
+     */
+    pub async fn resync_rtp_streams(&self, stream_ids: Vec<String>) {
+        for id in stream_ids {
+            self.resync_stream(id).await;
+        }
+    }
+
+    /**
+     * Re-starts the internal buffered track to force a GOP re-sync on the client.
      */
     pub async fn resync_stream(&self, stream_id: String) {
         // Only perform a re-sync if connected.

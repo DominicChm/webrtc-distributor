@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::{Arc, Weak};
 
+use tokio::sync::RwLock;
+
 use crate::rtp_track::RtpTrack;
-use crate::StreamDef;
+use crate::track_def::StreamDef;
 
 pub struct Stream {
     pub video: Option<Arc<RtpTrack>>,
@@ -11,19 +13,21 @@ pub struct Stream {
     pub def: StreamDef,
 }
 pub struct StreamManager {
-    streams: HashMap<String, Arc<Stream>>,
+    streams: RwLock<HashMap<String, Arc<Stream>>>,
 }
 
 impl StreamManager {
     pub fn new() -> StreamManager {
         StreamManager {
-            streams: HashMap::new(),
+            streams: RwLock::new(HashMap::new()),
         }
     }
 
-    pub fn sync_tracks(&mut self, stream_defs: Vec<StreamDef>) {
+    pub async fn sync_tracks(&self, stream_defs: Vec<StreamDef>) {
         let current_streams: HashSet<StreamDef> = self
             .streams
+            .write()
+            .await
             .values()
             .cloned()
             .map(|s| s.def.clone())
@@ -35,7 +39,7 @@ impl StreamManager {
 
         // Instantiate new streams
         for stream in created_streams {
-            self.create_stream(stream.clone());
+            self.create_stream(stream.clone()).await;
         }
 
         let deleted_streams = current_streams.difference(&incoming_streams);
@@ -44,9 +48,9 @@ impl StreamManager {
         for _stream in deleted_streams {}
     }
 
-    pub fn create_stream(&mut self, def: StreamDef) -> Arc<Stream> {
+    pub async fn create_stream(&self, def: StreamDef) -> Arc<Stream> {
         let id = def.id.to_string();
-        if self.streams.contains_key(&id) {
+        if self.streams.read().await.contains_key(&id) {
             panic!("Already contains stream");
         }
 
@@ -54,6 +58,7 @@ impl StreamManager {
             .video
             .as_ref()
             .map(|t| Arc::new(RtpTrack::new(&t, &def)));
+            
         let audio = def
             .audio
             .as_ref()
@@ -65,24 +70,21 @@ impl StreamManager {
             def: def.clone(),
         });
 
-        self.streams.insert(def.id.clone(), s.clone());
+        self.streams.write().await.insert(def.id.clone(), s.clone());
 
         s
     }
 
-    pub fn delete_stream(&mut self, id: &String) {
-        self.streams.remove(id);
+    pub async fn delete_stream(&self, id: &String) {
+        self.streams.write().await.remove(id);
         todo!("Finish stream deletion");
     }
 
-    pub fn get_stream(&self, stream_id: &String) -> Option<Arc<Stream>> {
-        self.streams
-            .get(stream_id)
-            .clone()
-            .map(|f| f.clone())
+    pub async fn get_stream(&self, stream_id: &String) -> Option<Arc<Stream>> {
+        self.streams.read().await.get(stream_id).clone().map(|f| f.clone())
     }
 
-    pub fn stream_defs(&self) -> Vec<StreamDef> {
-        self.streams.values().map(|f| f.def.clone()).collect()
+    pub async fn stream_defs(&self) -> Vec<StreamDef> {
+        self.streams.read().await.values().map(|f| f.def.clone()).collect()
     }
 }
