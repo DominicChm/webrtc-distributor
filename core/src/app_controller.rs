@@ -1,6 +1,6 @@
 use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, Weak},
+    collections::{HashMap},
+    sync::{Arc},
 };
 
 use crate::{
@@ -10,9 +10,9 @@ use crate::{
 };
 use anyhow::Result;
 use serde::Serialize;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock};
 use webrtc::peer_connection::{
-    peer_connection_state::RTCPeerConnectionState, sdp::session_description::RTCSessionDescription,
+    sdp::session_description::RTCSessionDescription,
 };
 
 #[derive(Serialize, Clone)]
@@ -36,7 +36,7 @@ impl AppController {
         }
     }
 
-    pub async fn ensure_client(&self, client_id: &String) -> Result<Arc<Client>> {
+    async fn ensure_client(&self, client_id: &String) -> Result<Arc<Client>> {
         let client_exists = self.clients.read().await.contains_key(client_id);
 
         if !client_exists {
@@ -77,33 +77,6 @@ impl AppController {
         // TEST: ADD STREAM
 
         Ok(c.clone())
-    }
-
-    pub async fn signal(
-        &self,
-        client_id: &String,
-        offer: RTCSessionDescription,
-    ) -> Result<RTCSessionDescription> {
-        let c = self.ensure_client(client_id).await?;
-        let res = c.signal(offer).await;
-        if res.is_err() {
-            self.discard_client(&client_id).await;
-        }
-
-        res
-    }
-
-    async fn discard_client(&self, client_id: &String) {
-        let mut clients = self.clients.write().await;
-
-        // Remove the client from our list
-        let c = clients.remove(client_id).unwrap();
-
-        // Finalize the client and drop it.
-        // This should deallocate the client (strong arc = 0)
-        // which should stop any related tasks holding a weak as well
-        c.discard().await;
-        drop(c);
     }
 
     pub async fn streams(&self) -> Vec<StreamDef> {

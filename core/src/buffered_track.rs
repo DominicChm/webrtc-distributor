@@ -31,7 +31,7 @@ pub struct TaskControls {
  */
 impl BufferedTrack {
     pub fn new(rtp_track: Arc<RtpTrack>) -> Arc<BufferedTrack> {
-        let suffix: String = thread_rng()
+        let _suffix: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(5)
             .map(char::from)

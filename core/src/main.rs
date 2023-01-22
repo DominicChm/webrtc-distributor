@@ -5,11 +5,16 @@ mod track_def;
 //mod server;
 mod buffered_track;
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    fs::{self, read_to_string},
+    net::IpAddr,
+    path::PathBuf,
+    str::FromStr,
     sync::Arc,
 };
 mod stats;
-use serde::{Deserialize, Serialize};
+
+use serde::{de::DeserializeOwned, Deserialize, Deserializer};
+use serde_json::{from_value, Value};
 use stream_manager::StreamManager;
 use structopt::StructOpt;
 use track_def::{StreamDef, TrackDef};
@@ -17,50 +22,64 @@ mod client;
 mod net_util;
 mod server;
 mod stream_manager;
+use anyhow::{anyhow, Context, Result};
 
-#[derive(Debug, StructOpt)]
-#[structopt(name = "example", about = "An example of StructOpt usage.")]
-struct Opt {
-    /// File name: only required when `out-type` is set to `file`
-    #[structopt(name = "Offer")]
-    offer: String,
+#[derive(Deserialize, Debug)]
+struct Config {
+    lel: String,
 }
 
-pub struct Config {}
+/**
+ * Attempts to read JSON as the passed type. The passed string can either 
+ * be raw JSON directly, or a filepath to a file containing JSON.   
+ */
+fn json_or_file<T: DeserializeOwned>(str: &str) -> Result<T> {
+    let raw_json_obj: Value = serde_json::from_str(str).or_else(|_| {
+        let path = str.parse::<PathBuf>()?;
+        let dat = read_to_string(path).or(Err(anyhow!(
+            "Passed argument isn't a valid file path or JSON"
+        )))?;
+        let val: Value = serde_json::from_str(&dat).or(Err(anyhow!(
+            "Passed argument IS a valid file, but it doesn't contain valid JSON"
+        )))?;
+        Ok::<Value, anyhow::Error>(val)
+    })?;
 
-// https://jsfiddle.net/xq6eua2k/1/
+    from_value::<T>(raw_json_obj)
+        .with_context(|| format!("Found JSON, but could not parse into {}", std::any::type_name::<T>()))
+}
+
+#[derive(Debug, StructOpt)]
+#[structopt(
+    name = "EasyStreamer",
+    about = "Simple, low-latency browser video streamer"
+)]
+struct Opt {
+    /// EasyStreamer configuration. Can either be a JSON file path or a JSON string.
+    #[structopt(short="c", parse(try_from_str=json_or_file))]
+    config: Config,
+}
+
 #[tokio::main]
 async fn main() {
-    //let opt = Opt::from_args();
-    let test_stream = StreamDef {
-        id: "test_stream".to_string(),
-        default: true,
-        video: Some(TrackDef {
-            codec: track_def::Codec::H264,
-            port: 5002,
-            ip: Some("0.0.0.0".parse::<IpAddr>().unwrap()),
-        }),
-        audio: None,
-    };
-
-    // let test_stream2 = StreamDef {
-    //     id: "test_stream_2".to_string(),
+    let opt = Opt::from_args();
+    // let test_stream = StreamDef {
+    //     id: "test_stream".to_string(),
     //     default: true,
     //     video: Some(TrackDef {
-    //         codec: "h264".to_string(),
+    //         codec: track_def::Codec::H264,
     //         port: 5002,
-    //         ip: Some("239.7.69.7".parse::<IpAddr>().unwrap()),
+    //         ip: Some("0.0.0.0".parse::<IpAddr>().unwrap()),
     //     }),
     //     audio: None,
     // };
+
     let sm = Arc::new(StreamManager::new());
 
-    sm.create_stream(test_stream).await;
+    //sm.create_stream(test_stream).await;
     //sm.create_stream(test_stream2);
 
     let c = Arc::new(app_controller::AppController::new(sm));
 
-    server::init(c, tokio::runtime::Handle::current())
-        .join()
-        .unwrap();
+    server::init(c).await
 }

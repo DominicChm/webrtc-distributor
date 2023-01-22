@@ -5,14 +5,10 @@ use std::{
 
 use anyhow::{Error, Result};
 use serde::Serialize;
-use sysinfo::{
-    CpuExt, CpuRefreshKind, Pid, PidExt, ProcessExt, ProcessRefreshKind, RefreshKind, System,
-    SystemExt,
-};
+use sysinfo::{CpuExt, CpuRefreshKind, Pid, PidExt, ProcessExt, RefreshKind, System, SystemExt};
 use tokio::{
     sync::RwLock,
-    task::JoinHandle,
-    time::{self, Sleep},
+    time::{self},
 };
 
 const POLL_DELAY: u64 = 1000;
@@ -30,7 +26,7 @@ pub struct SystemStatus {
 }
 
 pub struct SystemStatusReader {
-    sys: Arc<RwLock<System>>,
+    _sys: Arc<RwLock<System>>,
     stats: Arc<RwLock<SystemStatus>>,
 }
 /**
@@ -40,9 +36,9 @@ impl SystemStatusReader {
     pub fn new() -> SystemStatusReader {
         let sys = Arc::new(RwLock::new(System::new()));
         let stats = Arc::new(RwLock::new(SystemStatus::default()));
-        let task = SystemStatusReader::updater_task(Arc::downgrade(&sys), Arc::downgrade(&stats));
+        let _task = SystemStatusReader::updater_task(Arc::downgrade(&sys), Arc::downgrade(&stats));
 
-        SystemStatusReader { sys, stats }
+        SystemStatusReader { _sys: sys, stats }
     }
 
     /**

@@ -8,7 +8,7 @@ use webrtc::{
     api::{
         interceptor_registry::register_default_interceptors, media_engine::MediaEngine, APIBuilder,
     },
-    ice_transport::{ice_connection_state::RTCIceConnectionState, ice_server::RTCIceServer},
+    ice_transport::{ice_server::RTCIceServer},
     interceptor::registry::Registry,
     peer_connection::{
         configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
@@ -133,6 +133,9 @@ impl Client {
         });
     }
 
+    /**
+     * Performs Webrtc signalling
+     */
     pub async fn signal(&self, offer: RTCSessionDescription) -> Result<RTCSessionDescription> {
         // Holding this mutex will prevent multiple signals from happening simultaneously
         let _sig_lock = self.signalling.lock().await;

@@ -1,5 +1,4 @@
 use std::{
-    fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
 };
 

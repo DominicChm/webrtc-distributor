@@ -1,17 +1,26 @@
 use std::{
+    borrow::Cow,
+    f32::consts::E,
+    ffi::OsStr,
+    future::Future,
     io::Read,
+    net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
-    time,
 };
 
 // Powers the internal server
-use crate::{app_controller::AppController, stats::SystemStatusReader};
-use anyhow::{anyhow, bail, Result};
-use rouille::{extension_to_mime, router, Request, Response};
+use crate::{app_controller::AppController, client::Client};
+use anyhow::{anyhow, Result};
+use axum::{
+    extract::State,
+    http::{header, StatusCode, Uri},
+    response::{Html, IntoResponse},
+    routing::{get, post},
+    Json, Router,
+};
 use rust_embed::RustEmbed;
-use serde::{Deserialize, Serialize};
-use sysinfo::{System, SystemExt};
+use serde::Deserialize;
 use tokio::runtime::Handle;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
@@ -32,126 +41,101 @@ struct SyncRequest {
 #[folder = "../frontend/dist/"]
 struct Assets;
 
-pub fn init(c: Arc<AppController>, rt: Handle) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        rouille::start_server("0.0.0.0:80", move |request| {
-            router!(request,
-                // WebRTC Signalling API
-                // Controls what streams are being sent and WebRTC signalling
-                (POST) (/api/signal) => {
-                    rt.block_on(async {
-                        match signal(&request, &c).await {
-                            Ok(r) => r,
-                            Err(e) => Response::text(e.to_string()).with_status_code(500),
-                        }
-                     })
-                },
+const ASSET_ROOT: &str = "index.html";
 
-                //
-                (POST) (/api/resync) => {
-                    rt.block_on(async {
-                        match resync(&request, &c).await {
-                            Ok(r) => r,
-                            Err(e) => Response::text(e.to_string()).with_status_code(500),
-                        }
-                     })
-                },
+type Controller = Arc<AppController>;
 
-                // Pollable endpoint with stats about system
-                (GET) (/api/stats) => {
-                    rt.block_on(async { stats(&c).await })
-                },
+pub async fn init(controller: Arc<AppController>) {
+    let api = Router::new()
+        .route("/signal", post(handle_signalling))
+        .route("/resync", post(handle_rtp_resync))
+        .route("/stats", get(handle_stats))
+        .route("/streams", get(handle_streams));
 
-                // Pollable endpoint with info about all available streams.
-                (GET) (/api/streams) => {
-                    rt.block_on(async {
-                        Response::json(&c.streams().await)
-                     })
-                    
-                },
+    let app = Router::new()
+        .route("/", get(handle_asset))
+        .nest("/api", api)
+        .with_state(controller);
 
-                // default route
-                _ => serve_default(&request)
-            )
-        })
-    })
+    let addr = SocketAddr::from(([127, 0, 0, 1], 80));
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
 
-fn serve_default(request: &Request) -> Response {
-    match_embedded_asset(request, "index.html")
-        .unwrap_or_else(|e| Response::text(e.to_string()).with_status_code(400))
-}
-
-async fn signal(request: &Request, app_controller: &Arc<AppController>) -> Result<Response> {
-    println!("Got signalling request");
-
-    // Parse incoming request into a SignallingRequest object
-    let mut buf = String::new();
-    request
-        .data()
-        .ok_or(anyhow!("No request data received"))?
-        .read_to_string(&mut buf)?;
-    let signalling: SignallingRequest = serde_json::from_str(&buf).unwrap();
-
-    let app_controller = app_controller.clone();
-
-    // Sync streams of client with passed UID
-    app_controller
-        .client(&signalling.uid)
-        .await?
-        .sync_active_streams(signalling.stream_ids)
-        .await;
-
-    let signal_result = app_controller
-        .signal(&signalling.uid, signalling.offer)
-        .await;
-
-    match signal_result {
-        Ok(res) => Ok(Response::json(&res)),
-        Err(e) => {
-            eprintln!("Signalling request failed: {}", e);
-            Err(anyhow!(e.to_string()))
-        }
-    }
-}
-
-async fn resync(request: &Request, app_controller: &Arc<AppController>) -> Result<Response> {
-    // Parse incoming request into a SignallingRequest object
-    let mut buf = String::new();
-    request
-        .data()
-        .ok_or(anyhow!("No request data received"))?
-        .read_to_string(&mut buf)?;
-
-    let req: SyncRequest = serde_json::from_str(&buf).unwrap();
-
-    app_controller
-        .client(&req.uid)
-        .await?
-        .resync_rtp_streams(req.stream_ids)
-        .await;
-
-    Ok(Response::text("OK").with_status_code(200))
-}
-
-async fn stats(a: &Arc<AppController>) -> Response {
-    let stats = a.stats().await;
-    Response::json(&stats)
-}
-
-pub fn match_embedded_asset(request: &Request, root: &str) -> Result<Response> {
-    let raw_path = if request.url().len() <= 1 {
-        root.to_string()
+async fn handle_asset(uri: Uri) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let raw_path = if uri.path().len() <= 1 {
+        uri.path()
     } else {
-        request.url().split_at(1).1.to_string()
+        ASSET_ROOT
     };
 
-    eprintln!("SERVING: {}", &raw_path);
+    let path = Path::new(raw_path)
+        .strip_prefix("/")
+        .or(Err((StatusCode::NOT_FOUND, "Malformed path".into())))?;
 
-    let file = Assets::get(&raw_path).ok_or(anyhow!("No file found"))?;
+    eprintln!("SERVING: {}", path.display());
 
-    let path = request.url().parse::<PathBuf>()?;
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("html");
+    let file = Assets::get(&raw_path).ok_or((
+        StatusCode::NOT_FOUND,
+        format!("{} not found.", path.display()),
+    ))?;
 
-    Ok(Response::from_data(extension_to_mime(ext), file.data))
+    let mime = mime_guess::from_path(path)
+        .first_or_text_plain()
+        .to_string();
+
+    Ok((StatusCode::OK, [(header::CONTENT_TYPE, mime)], file.data))
+}
+
+async fn handle_signalling(
+    State(cont): State<Controller>,
+    Json(req): Json<SignallingRequest>,
+) -> impl IntoResponse {
+    println!("Got signalling request");
+
+    let client = get_client(&cont, &req.uid).await?;
+
+    // Sync streams of client with passed UID
+    client.sync_active_streams(req.stream_ids).await;
+
+    // Do webrtc signalling
+    client
+        .signal(req.offer)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+        .map(|v| Json(v))
+}
+
+async fn handle_rtp_resync(
+    State(cont): State<Controller>,
+    Json(req): Json<SyncRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let client = get_client(&cont, &req.uid).await?;
+
+    client.resync_rtp_streams(req.stream_ids).await;
+
+    Ok(StatusCode::OK)
+}
+
+async fn handle_stats(State(ctx): State<Controller>) -> impl IntoResponse {
+    Json(ctx.stats().await)
+}
+
+async fn handle_streams(State(ctx): State<Controller>) -> impl IntoResponse {
+    Json(ctx.streams().await)
+}
+
+/**
+ * Helper function to get a client from the AppController in a way that can
+ * gracefully error into a response. Cuts down on some boilerplate.
+ */
+async fn get_client(cont: &Controller, uid: &String) -> Result<Arc<Client>, (StatusCode, String)> {
+    cont.client(uid).await.map_err(|e| {
+        (
+            StatusCode::UNAUTHORIZED,
+            format!("Client could not be found or created. ({})", e),
+        )
+    })
 }
